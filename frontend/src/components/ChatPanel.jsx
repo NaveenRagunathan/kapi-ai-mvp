@@ -51,9 +51,10 @@ function formatMessageText(text) {
   );
 }
 
-export default function ChatPanel({ messages, onSend, loading, suggestedPrompts, onPromptClick, injectionWarning, onDismissWarning }) {
+export default function ChatPanel({ messages, onSend, loading, suggestedPrompts, onPromptClick, injectionWarning, onDismissWarning, onAttach }) {
   const [input, setInput] = useState('');
   const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,6 +65,17 @@ export default function ChatPanel({ messages, onSend, loading, suggestedPrompts,
     if (!input.trim() || loading) return;
     onSend(input.trim());
     setInput('');
+  };
+
+  const handleAttachClick = () => {
+    if (loading) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file && onAttach) onAttach(file);
   };
 
   return (
@@ -133,6 +145,27 @@ export default function ChatPanel({ messages, onSend, loading, suggestedPrompts,
       )}
 
       <form className="chat-input" onSubmit={handleSubmit}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls,image/png,image/jpeg,image/webp"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+          aria-hidden="true"
+          tabIndex={-1}
+        />
+        <button
+          type="button"
+          className="btn-secondary chat-attach"
+          onClick={handleAttachClick}
+          disabled={loading}
+          aria-label="Attach a new portfolio (CSV, Excel, or screenshot)"
+          title="Attach a new portfolio (CSV, Excel, or screenshot)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
         <input
           type="text"
           placeholder="Ask about your portfolio\u2026"

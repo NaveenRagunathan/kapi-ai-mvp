@@ -180,6 +180,9 @@ async def chat_stream_generator(session_id: str, message: str):
             "suggested_prompts": response.suggested_prompts,
         }
         yield f"event: canvas\ndata: {json.dumps(canvas_payload)}\n\n"
+
+        if response.portfolio_update:
+            yield f"event: portfolio_update\ndata: {json.dumps(response.portfolio_update)}\n\n"
     except asyncio.CancelledError:
         # Always re-raise CancelledError so the event loop can clean up
         raise

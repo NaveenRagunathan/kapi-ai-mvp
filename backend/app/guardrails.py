@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
     text: str
     suggested_prompts: List[str]
     canvas_state: CanvasState
+    portfolio_update: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +186,10 @@ def parse_llm_output(raw) -> ChatResponse:
         raise ValueError(f"LLM output failed schema validation: {exc}") from exc
 
 
-def make_fallback_response(text: str) -> ChatResponse:
+def make_fallback_response(text) -> ChatResponse:
     """Create a safe ChatResponse when parsing fails completely."""
     return ChatResponse(
-        text=text,
+        text=_normalize_llm_raw(text),
         suggested_prompts=[],
         canvas_state=CanvasState(view="none", data={}),
     )

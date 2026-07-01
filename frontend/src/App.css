@@ -904,7 +904,8 @@
   color: var(--color-text-tertiary);
 }
 
-.chat-send {
+.chat-send,
+.chat-attach {
   padding: var(--space-sm);
   width: 40px;
   height: 40px;
@@ -912,6 +913,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 @media (max-width: 640px) {

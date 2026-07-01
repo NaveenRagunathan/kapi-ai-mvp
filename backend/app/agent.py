@@ -15,10 +15,12 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_vertexai import ChatVertexAI
 
+from app.ingestion import ingest_portfolio
 from app.math_engine import (
     calculate_performance_metrics,
     calculate_risk_metrics,
     get_diversification_and_sector_exposure,
+    get_portfolio_baseline,
     run_what_if_simulation,
     get_correlation_matrix,
 )
@@ -58,6 +60,7 @@ def clear_session(session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 _current_holdings: list[dict] = []
+_current_session_id: str | None = None
 
 # The LLM is asked to echo each tool's raw return dict into canvas_state.data,
 # but it sometimes fails to transcribe the full JSON faithfully even when it
@@ -144,6 +147,40 @@ def get_correlation_matrix_tool() -> dict:
     return result
 
 
+@tool
+def update_portfolio(raw_text: str) -> dict:
+    """Replace the current portfolio with new holdings described in raw_text.
+    Call this when the user's message contains new portfolio data — tickers,
+    quantities, weights, or a holdings table — instead of asking a question.
+    Do not analyze the old portfolio further once this succeeds; treat prior
+    conversation metrics as stale."""
+    global _current_holdings
+    from app.portfolio_service import calculate_weights  # lazy: avoids circular import (portfolio_service imports set_portfolio from here)
+
+    result = ingest_portfolio(text=raw_text)
+    if not result.holdings:
+        error_msg = "; ".join(e.message for e in result.errors) or "No valid holdings found in the provided text."
+        response = {"success": False, "error": error_msg}
+        _last_tool_result["update_portfolio"] = response
+        return response
+
+    holdings_dicts = [h.model_dump() for h in result.holdings]
+    holdings_dicts = calculate_weights(holdings_dicts, _current_session_id or "unknown")
+
+    set_portfolio(_current_session_id, holdings_dicts)
+    _current_holdings = holdings_dicts
+
+    baseline = get_portfolio_baseline(holdings_dicts)
+    response = {
+        "success": True,
+        "holdings": holdings_dicts,
+        "baseline": baseline,
+        "count": len(holdings_dicts),
+    }
+    _last_tool_result["update_portfolio"] = response
+    return response
+
+
 _TOOLS = [
     get_portfolio_allocation,
     calculate_performance,
@@ -151,6 +188,7 @@ _TOOLS = [
     get_diversification,
     simulate_trade,
     get_correlation_matrix_tool,
+    update_portfolio,
 ]
 
 # ---------------------------------------------------------------------------
@@ -177,12 +215,14 @@ ABSOLUTE RULES — never break these:
    - what-if / swap / simulate / replace query → "whatif"
    - correlation / how holdings move / matrix query → "correlation"
    - allocation / holdings / weights query → "none"
+   - portfolio update (see rule 10) → "none"
 4. canvas_state.data must be the FULL dict returned by the tool.
 5. suggested_prompts must be 3 specific, actionable follow-up questions.
 6. In text: cite key numbers, compare to benchmarks, give actionable insights. Be specific.
 7. For Indian portfolios, default benchmark is ^NSEI (Nifty 50).
 8. Use a professional, clean, conversational, and interactive tone. Avoid AI-sloppy phrasing, robotic patterns, or overly dense tables/text blocks.
 9. Keep markdown formatting extremely clean. Use bulleted lists properly (e.g. `* Item text` or `* **Item Name**: description`). Never mix bold markers and lists in a confusing way (e.g., avoid `* **Item**:` on a line by itself).
+10. If the user's message contains new portfolio data (tickers, quantities, weights, or a holdings table) rather than a question, call `update_portfolio` with the raw message text instead of answering normally. If it succeeds, confirm the change conversationally and suggest what to explore next — do not analyze or cite metrics from the previous portfolio again once it's been replaced. If it fails, explain the parsing error and ask the user to clarify the format.
 
 You only discuss portfolio analysis. Respond only in the JSON schema above."""
 
@@ -253,6 +293,7 @@ _TOOL_TO_VIEW = {
     "simulate_trade": "whatif",
     "get_correlation_matrix_tool": "correlation",
     "get_portfolio_allocation": "none",
+    "update_portfolio": "none",
 }
 
 
@@ -271,9 +312,10 @@ def _last_tool_called(messages: list) -> str | None:
 # ---------------------------------------------------------------------------
 
 def chat(session_id: str, user_message: str) -> ChatResponse:
-    global _current_holdings
+    global _current_holdings, _current_session_id
     session = get_or_create_session(session_id)
     _current_holdings = session.holdings
+    _current_session_id = session_id
     _last_tool_result.clear()
 
     executor = _get_agent()
@@ -319,6 +361,17 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
         tool_data = _last_tool_result.get(last_tool)
         if tool_data:
             response.canvas_state.data = tool_data
+
+    # portfolio_update is populated here from the tool's real return value
+    # (never by the LLM) — same rationale as the canvas_state override above.
+    if last_tool == "update_portfolio":
+        tool_data = _last_tool_result.get("update_portfolio")
+        if tool_data and tool_data.get("success"):
+            response.portfolio_update = {
+                "holdings": tool_data["holdings"],
+                "baseline": tool_data["baseline"],
+                "count": tool_data["count"],
+            }
 
     session.history.append({"role": "user", "content": user_message})
     session.history.append({"role": "assistant", "content": _normalize_llm_raw(raw_output)})

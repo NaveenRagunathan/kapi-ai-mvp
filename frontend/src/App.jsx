@@ -8,6 +8,57 @@ import { sendChatMessageStream, ingestPortfolioFile, ingestPortfolioText, ingest
 const ChatPanel = lazy(() => import('./components/ChatPanel'));
 const VisualCanvas = lazy(() => import('./components/VisualCanvas'));
 
+function buildPortfolioSummaryMessage(baseline, holdingsCount) {
+  const b = baseline;
+  const n = holdingsCount;
+  const sharpe = b?.performance?.portfolio_sharpe;
+  const mdd = b?.risk?.max_drawdown;
+  const cagr = b?.performance?.portfolio_cagr;
+  const grade = b?.health?.grade;
+  const sectors = b?.diversification?.sectors || {};
+  const topSector = Object.entries(sectors).sort((a, bb) => bb[1] - a[1])[0];
+  const topSectorStr = topSector ? `${topSector[0]} (${(topSector[1] * 100).toFixed(0)}%)` : null;
+
+  const sharpeStr = typeof sharpe === 'number' ? sharpe.toFixed(2) : null;
+  const mddStr = typeof mdd === 'number' ? `${(mdd * 100).toFixed(1)}%` : null;
+  const cagrStr = typeof cagr === 'number' ? `${(cagr * 100).toFixed(1)}%` : null;
+
+  let welcomeText = `I've finished analyzing your ${n}-holding portfolio`;
+  if (grade) welcomeText += ` — overall health grade **${grade}**`;
+  welcomeText += '.';
+
+  const highlights = [];
+  if (cagrStr) highlights.push(`1-year CAGR of **${cagrStr}**`);
+  if (sharpeStr) highlights.push(`Sharpe ratio of **${sharpeStr}**`);
+  if (mddStr) highlights.push(`max drawdown of **${mddStr}**`);
+  if (highlights.length) welcomeText += ` Key metrics: ${highlights.join(', ')}.`;
+
+  if (topSector && topSector[1] > 0.35) {
+    welcomeText += ` I noticed **${topSectorStr}** is your dominant sector — worth exploring concentration risk.`;
+  }
+
+  welcomeText += ' What would you like to dig into?';
+
+  const smartPrompts = [];
+  if (typeof sharpe === 'number' && sharpe < 0.5) {
+    smartPrompts.push('Why is my risk-adjusted return low?');
+  } else {
+    smartPrompts.push('What is my portfolio Sharpe ratio?');
+  }
+  if (topSector && topSector[1] > 0.35) {
+    smartPrompts.push(`How does a ${topSector[0]} sector correction impact me?`);
+  } else {
+    smartPrompts.push('Analyze my sector diversification');
+  }
+  if (typeof mdd === 'number' && mdd < -0.2) {
+    smartPrompts.push('Show me my max drawdown and tail risk');
+  } else {
+    smartPrompts.push('Run a what-if: sell my top holding and buy Gold ETF');
+  }
+
+  return { text: welcomeText, prompts: smartPrompts };
+}
+
 export default function App() {
   const [view, setView] = useState('ingest');
   const [sessionId, setSessionId] = useState(null);
@@ -47,54 +98,7 @@ export default function App() {
       setHoldings(data.holdings || []);
       setBaseline(data.baseline);
 
-      // Build a personalized welcome message from real baseline metrics
-      const b = data.baseline;
-      const n = data.holdings?.length || 0;
-      const sharpe = b?.performance?.portfolio_sharpe;
-      const mdd = b?.risk?.max_drawdown;
-      const cagr = b?.performance?.portfolio_cagr;
-      const grade = b?.health?.grade;
-      const sectors = b?.diversification?.sectors || {};
-      const topSector = Object.entries(sectors).sort((a, b) => b[1] - a[1])[0];
-      const topSectorStr = topSector ? `${topSector[0]} (${(topSector[1] * 100).toFixed(0)}%)` : null;
-
-      const sharpeStr = typeof sharpe === 'number' ? sharpe.toFixed(2) : null;
-      const mddStr = typeof mdd === 'number' ? `${(mdd * 100).toFixed(1)}%` : null;
-      const cagrStr = typeof cagr === 'number' ? `${(cagr * 100).toFixed(1)}%` : null;
-
-      let welcomeText = `I've finished analyzing your ${n}-holding portfolio`;
-      if (grade) welcomeText += ` — overall health grade **${grade}**`;
-      welcomeText += '.';
-
-      const highlights = [];
-      if (cagrStr) highlights.push(`1-year CAGR of **${cagrStr}**`);
-      if (sharpeStr) highlights.push(`Sharpe ratio of **${sharpeStr}**`);
-      if (mddStr) highlights.push(`max drawdown of **${mddStr}**`);
-      if (highlights.length) welcomeText += ` Key metrics: ${highlights.join(', ')}.`;
-
-      if (topSector && topSector[1] > 0.35) {
-        welcomeText += ` I noticed **${topSectorStr}** is your dominant sector — worth exploring concentration risk.`;
-      }
-
-      welcomeText += ' What would you like to dig into?';
-
-      // Smart suggested prompts based on vulnerabilities
-      const smartPrompts = [];
-      if (typeof sharpe === 'number' && sharpe < 0.5) {
-        smartPrompts.push('Why is my risk-adjusted return low?');
-      } else {
-        smartPrompts.push('What is my portfolio Sharpe ratio?');
-      }
-      if (topSector && topSector[1] > 0.35) {
-        smartPrompts.push(`How does a ${topSector[0]} sector correction impact me?`);
-      } else {
-        smartPrompts.push('Analyze my sector diversification');
-      }
-      if (typeof mdd === 'number' && mdd < -0.2) {
-        smartPrompts.push('Show me my max drawdown and tail risk');
-      } else {
-        smartPrompts.push('Run a what-if: sell my top holding and buy Gold ETF');
-      }
+      const { text: welcomeText, prompts: smartPrompts } = buildPortfolioSummaryMessage(data.baseline, data.holdings?.length || 0);
 
       setMessages([{ role: 'assistant', text: welcomeText }]);
       setSuggestedPrompts(smartPrompts);
@@ -105,6 +109,32 @@ export default function App() {
       setLoadingBaseline(false);
     }
   }, []);
+
+  const handlePortfolioAttach = useCallback(async (file) => {
+    if (chatLoadingRef.current) return;
+    chatLoadingRef.current = true;
+    setChatLoading(true);
+    try {
+      const isImage = file.type.startsWith('image/');
+      const data = isImage
+        ? await ingestPortfolioImages([file], sessionId)
+        : await ingestPortfolioFile(file, sessionId);
+
+      setSessionId(data.session_id);
+      setHoldings(data.holdings || []);
+      setBaseline(data.baseline);
+      setCanvasState({ view: 'none', data: {} });
+
+      const { text: summaryText, prompts: smartPrompts } = buildPortfolioSummaryMessage(data.baseline, data.holdings?.length || 0);
+      setMessages((prev) => [...prev, { role: 'assistant', text: `**Portfolio updated.** ${summaryText}` }]);
+      setSuggestedPrompts(smartPrompts);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: 'assistant', text: `Couldn't update your portfolio: ${e.message || 'upload failed'}. Please try again.` }]);
+    } finally {
+      setChatLoading(false);
+      chatLoadingRef.current = false;
+    }
+  }, [sessionId]);
 
   const handleSend = useCallback(async (message) => {
     if (chatLoadingRef.current) return;
@@ -162,6 +192,9 @@ export default function App() {
           }
           setCanvasState({ view: data.view, data: data.data });
           setSuggestedPrompts(data.suggested_prompts || []);
+        } else if (event === 'portfolio_update') {
+          setHoldings(data.holdings || []);
+          setBaseline(data.baseline);
         } else if (event === 'error') {
           if (tokenBufferRef.rafId) {
             cancelAnimationFrame(tokenBufferRef.rafId);
@@ -269,6 +302,7 @@ export default function App() {
             <ChatPanel
               messages={messages}
               onSend={handleSend}
+              onAttach={handlePortfolioAttach}
               loading={chatLoading || loadingBaseline}
               suggestedPrompts={suggestedPrompts}
               onPromptClick={handleSend}
