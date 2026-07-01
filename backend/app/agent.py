@@ -59,6 +59,14 @@ def clear_session(session_id: str) -> None:
 
 _current_holdings: list[dict] = []
 
+# The LLM is asked to echo each tool's raw return dict into canvas_state.data,
+# but it sometimes fails to transcribe the full JSON faithfully even when it
+# gets the numbers right in prose. Tools stash their real return value here
+# so chat() can use the actual computed dict as canvas data instead of
+# trusting the LLM's copy of it -- consistent with "the LLM never computes,
+# it only calls tools" elsewhere in this codebase.
+_last_tool_result: dict[str, dict] = {}
+
 
 # ---------------------------------------------------------------------------
 # LangChain Tools
@@ -67,28 +75,36 @@ _current_holdings: list[dict] = []
 @tool
 def get_portfolio_allocation() -> dict:
     """Return the current portfolio allocation with tickers and weights."""
-    return {"holdings": _current_holdings}
+    result = {"holdings": _current_holdings}
+    _last_tool_result["get_portfolio_allocation"] = result
+    return result
 
 
 @tool
 def calculate_performance(benchmark_ticker: str = "^NSEI", timeframe: str = "1y") -> dict:
     """Calculate portfolio performance metrics: CAGR, Sharpe ratio, Sortino ratio vs benchmark.
     Use benchmark_ticker='^NSEI' for Indian portfolios, '^GSPC' for US portfolios."""
-    return calculate_performance_metrics(_current_holdings, benchmark_ticker, timeframe)
+    result = calculate_performance_metrics(_current_holdings, benchmark_ticker, timeframe)
+    _last_tool_result["calculate_performance"] = result
+    return result
 
 
 @tool
 def get_risk_metrics() -> dict:
     """Calculate portfolio risk metrics: Value at Risk (95% and 99%), CVaR/Expected Shortfall,
     Maximum Drawdown, Portfolio Beta, and Annualized Volatility."""
-    return calculate_risk_metrics(_current_holdings)
+    result = calculate_risk_metrics(_current_holdings)
+    _last_tool_result["get_risk_metrics"] = result
+    return result
 
 
 @tool
 def get_diversification() -> dict:
     """Analyze portfolio sector concentration and factor exposures (Size, Value, Momentum).
     Call this for questions about sector exposure, concentration risk, or factor overlap."""
-    return get_diversification_and_sector_exposure(_current_holdings)
+    result = get_diversification_and_sector_exposure(_current_holdings)
+    _last_tool_result["get_diversification"] = result
+    return result
 
 
 def _resolve_ticker(ticker: str) -> str:
@@ -113,7 +129,9 @@ def simulate_trade(sell_ticker: str, sell_weight: float, buy_ticker: str) -> dic
     Tickers will be auto-resolved to their full suffix (e.g. GOLDBEES → GOLDBEES.NS)."""
     resolved_sell = _resolve_ticker(sell_ticker)
     resolved_buy = _resolve_ticker(buy_ticker)
-    return run_what_if_simulation(_current_holdings, resolved_sell, sell_weight, resolved_buy)
+    result = run_what_if_simulation(_current_holdings, resolved_sell, sell_weight, resolved_buy)
+    _last_tool_result["simulate_trade"] = result
+    return result
 
 
 @tool
@@ -121,7 +139,9 @@ def get_correlation_matrix_tool() -> dict:
     """Compute the pairwise daily return correlation matrix for all portfolio holdings.
     Call this when the user asks about correlations, diversification quality,
     or how holdings move together."""
-    return get_correlation_matrix(_current_holdings)
+    result = get_correlation_matrix(_current_holdings)
+    _last_tool_result["get_correlation_matrix_tool"] = result
+    return result
 
 
 _TOOLS = [
@@ -254,6 +274,7 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
     global _current_holdings
     session = get_or_create_session(session_id)
     _current_holdings = session.holdings
+    _last_tool_result.clear()
 
     executor = _get_agent()
 
@@ -288,12 +309,16 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
         response = make_fallback_response(raw_output)
 
     # The LLM sometimes mislabels canvas_state.view (e.g. leaves it on the
-    # previous turn's view) even when it called the right tool and answered
-    # correctly. Override the view to match whichever math tool actually ran.
+    # previous turn's view), or fails to faithfully transcribe the tool's
+    # full return dict into canvas_state.data even when it gets the numbers
+    # right in prose. Override both from what we know actually ran.
     last_tool = _last_tool_called(result.get("messages", [])) if isinstance(result, dict) else None
     expected_view = _TOOL_TO_VIEW.get(last_tool)
-    if expected_view and response.canvas_state.view != expected_view:
+    if expected_view:
         response.canvas_state.view = expected_view
+        tool_data = _last_tool_result.get(last_tool)
+        if tool_data:
+            response.canvas_state.data = tool_data
 
     session.history.append({"role": "user", "content": user_message})
     session.history.append({"role": "assistant", "content": _normalize_llm_raw(raw_output)})
