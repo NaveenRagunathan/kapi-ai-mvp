@@ -7,6 +7,7 @@ from typing import Optional
 from app.ingestion import ingest_portfolio
 from app.agent import chat, set_portfolio, get_or_create_session, clear_session
 from app.guardrails import check_injection
+from app.math_engine import get_correlation_matrix
 
 app = FastAPI(title="Kalpi AI Portfolio Analyzer", version="0.1.0")
 
@@ -83,3 +84,11 @@ def get_session(session_id: str):
 def delete_session(session_id: str):
     clear_session(session_id)
     return {"message": "Session cleared"}
+
+
+@app.get("/api/portfolio/correlation/{session_id}")
+def get_correlation(session_id: str):
+    session = get_or_create_session(session_id)
+    if not session.holdings:
+        raise HTTPException(status_code=404, detail="No portfolio loaded for this session")
+    return get_correlation_matrix(session.holdings)

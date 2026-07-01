@@ -339,3 +339,42 @@ def run_what_if_simulation(
         "simulated_max_drawdown": simulated_max_drawdown,
         "message": message,
     }
+
+
+# ---------------------------------------------------------------------------
+# 3.5  Correlation matrix
+# ---------------------------------------------------------------------------
+
+
+def get_correlation_matrix(holdings: list[dict]) -> dict:
+    """Compute pairwise correlation matrix of daily returns for all holdings.
+
+    Returns:
+        {
+            "tickers": ["AAPL", "MSFT", ...],
+            "matrix": [[1.0, 0.7, ...], [0.7, 1.0, ...], ...],  # NxN correlation values
+            "labels": ["AAPL", "MSFT", ...]  # same as tickers, for chart labeling
+        }
+    """
+    from app.market_data import fetch_prices
+    import numpy as np
+
+    tickers = [h["ticker"] for h in holdings]
+    if len(tickers) < 2:
+        return {"tickers": tickers, "matrix": [[1.0]], "labels": tickers}
+
+    prices = fetch_prices(tickers, period="1y")
+    returns = prices.pct_change().dropna()
+
+    # Compute correlation matrix
+    corr_matrix = returns.corr()
+
+    # Reorder to match holdings order
+    available = [t for t in tickers if t in corr_matrix.columns]
+    corr_matrix = corr_matrix.loc[available, available]
+
+    return {
+        "tickers": available,
+        "matrix": corr_matrix.values.tolist(),
+        "labels": available,
+    }

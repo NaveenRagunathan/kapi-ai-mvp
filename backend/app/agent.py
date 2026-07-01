@@ -14,6 +14,7 @@ from app.math_engine import (
     calculate_risk_metrics,
     get_diversification_and_sector_exposure,
     run_what_if_simulation,
+    get_correlation_matrix,
 )
 from app.guardrails import ChatResponse, parse_llm_output, make_fallback_response
 
@@ -89,12 +90,20 @@ def simulate_trade(sell_ticker: str, sell_weight: float, buy_ticker: str) -> dic
     return run_what_if_simulation(_current_holdings, sell_ticker, sell_weight, buy_ticker)
 
 
+@tool
+def get_correlation_matrix_tool() -> dict:
+    """Compute the pairwise return correlation matrix for all portfolio holdings. Use when the user asks about correlations, diversification quality, or how holdings move together."""
+    from app.math_engine import get_correlation_matrix as _calc
+    return _calc(_current_holdings)
+
+
 _TOOLS = [
     get_portfolio_allocation,
     calculate_performance,
     get_risk_metrics,
     get_diversification,
     simulate_trade,
+    get_correlation_matrix_tool,
 ]
 
 # ---------------------------------------------------------------------------
