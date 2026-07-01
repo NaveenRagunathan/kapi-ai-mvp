@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 760" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00110c"/>
+      <stop offset="100%" stop-color="#002d20"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#013b29"/>
+      <stop offset="100%" stop-color="#012418"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#00d68f"/>
+    </marker>
+  </defs>
+
+  <rect width="1000" height="760" fill="url(#bg)"/>
+
+  <text x="500" y="40" text-anchor="middle" fill="#ffffff" font-size="24" font-weight="700">Kalpi AI Portfolio Analyzer — System Architecture</text>
+  <text x="500" y="62" text-anchor="middle" fill="#7fd9bd" font-size="13">Chat + Canvas · LLM never computes — it only orchestrates deterministic tools</text>
+
+  <!-- Frontend -->
+  <g filter="url(#glow)">
+    <rect x="120" y="90" width="760" height="80" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="500" y="118" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="600">React Frontend</text>
+  <text x="500" y="140" text-anchor="middle" fill="#bcd9cc" font-size="12">IngestionForm · ChatPanel (+ attach) · VisualCanvas · Charts</text>
+  <text x="500" y="158" text-anchor="middle" fill="#6fae94" font-size="11">SSE stream: token · canvas · portfolio_update</text>
+
+  <line x1="500" y1="170" x2="500" y2="200" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="520" y="190" fill="#6fae94" font-size="11">REST + SSE</text>
+
+  <!-- Backend -->
+  <g filter="url(#glow)">
+    <rect x="120" y="200" width="760" height="70" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="500" y="228" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="600">FastAPI Backend</text>
+  <text x="500" y="250" text-anchor="middle" fill="#bcd9cc" font-size="12">/api/portfolio/ingest[/file|/images] · /api/chat · /api/session/:id</text>
+
+  <line x1="350" y1="270" x2="350" y2="300" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="650" y1="270" x2="650" y2="300" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Guardrails + Agent -->
+  <g filter="url(#glow)">
+    <rect x="120" y="300" width="340" height="120" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="290" y="326" text-anchor="middle" fill="#ffffff" font-size="15" font-weight="600">Guardrails Engine</text>
+  <text x="145" y="350" fill="#bcd9cc" font-size="11">• Prompt-injection detection</text>
+  <text x="145" y="368" fill="#bcd9cc" font-size="11">• Strict ChatResponse/CanvasState schema</text>
+  <text x="145" y="386" fill="#bcd9cc" font-size="11">• Fallback response on malformed JSON</text>
+  <text x="145" y="404" fill="#bcd9cc" font-size="11">• Control-char stripping on SSE tokens</text>
+
+  <g filter="url(#glow)">
+    <rect x="540" y="300" width="340" height="120" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="710" y="326" text-anchor="middle" fill="#ffffff" font-size="15" font-weight="600">LangChain Agent</text>
+  <text x="565" y="350" fill="#bcd9cc" font-size="11">Gemini 2.5 Flash → Pro</text>
+  <text x="565" y="368" fill="#bcd9cc" font-size="11">→ OpenAI gpt-4o-mini → Claude Haiku 4.5</text>
+  <text x="565" y="390" fill="#6fae94" font-size="10.5">(graceful fallback chain — each tier only</text>
+  <text x="565" y="404" fill="#6fae94" font-size="10.5">added if its API key is present)</text>
+
+  <line x1="500" y1="420" x2="500" y2="450" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- 7 tools -->
+  <g filter="url(#glow)">
+    <rect x="90" y="450" width="820" height="150" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="500" y="476" text-anchor="middle" fill="#ffffff" font-size="15" font-weight="600">Deterministic Tools (LLM only calls these — never computes)</text>
+
+  <g font-size="11" fill="#d9f2e6">
+    <rect x="115" y="492" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+    <text x="230" y="513" text-anchor="middle">get_portfolio_allocation</text>
+
+    <rect x="360" y="492" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+    <text x="475" y="513" text-anchor="middle">calculate_performance</text>
+
+    <rect x="605" y="492" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+    <text x="720" y="513" text-anchor="middle">get_risk_metrics</text>
+
+    <rect x="115" y="536" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+    <text x="230" y="557" text-anchor="middle">get_diversification</text>
+
+    <rect x="605" y="536" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+    <text x="720" y="557" text-anchor="middle">simulate_trade</text>
+  </g>
+
+  <rect x="360" y="536" width="230" height="34" rx="8" fill="#012c1d" stroke="#0f5c40"/>
+  <text x="475" y="557" text-anchor="middle" fill="#d9f2e6" font-size="11">get_correlation_matrix_tool</text>
+
+  <rect x="277" y="580" width="446" height="20" rx="8" fill="#013a26" stroke="#00d68f" stroke-width="1.4"/>
+  <text x="500" y="594" text-anchor="middle" fill="#a6ffdf" font-size="11" font-weight="700">update_portfolio ★ mid-chat replace (new)</text>
+
+  <line x1="500" y1="600" x2="500" y2="630" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Math engine -->
+  <g filter="url(#glow)">
+    <rect x="120" y="630" width="760" height="60" rx="14" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="500" y="654" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="600">Math Engine (pandas/numpy — deterministic, package split by concern)</text>
+  <text x="500" y="674" text-anchor="middle" fill="#bcd9cc" font-size="11">performance · risk · diversification · correlation · whatif · holdings · health · baseline</text>
+
+  <line x1="500" y1="690" x2="500" y2="710" stroke="#00d68f" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Market data -->
+  <g filter="url(#glow)">
+    <rect x="220" y="710" width="560" height="40" rx="12" fill="url(#cardGrad)" stroke="#00885e" stroke-width="1.5"/>
+  </g>
+  <text x="500" y="735" text-anchor="middle" fill="#ffffff" font-size="12.5" font-weight="600">Market Data — Yahoo chart endpoint · parallelized per-ticker fetch · 24h SQLite cache</text>
+</svg>

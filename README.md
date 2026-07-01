@@ -1,196 +1,178 @@
-# Kalpi AI Portfolio Analyzer
+# 📊 Kalpi AI Portfolio Analyzer
 
-An institutional-grade AI portfolio analyzer that turns raw investment data into personalized, interactive financial insights through a Chat + Canvas interface.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    React Frontend                        │
-│   IngestionForm │ ChatPanel │ VisualCanvas │ Charts      │
-└────────────┬───────────────────────┬────────────────────┘
-             │ REST (JSON/multipart)  │
-┌────────────▼───────────────────────▼────────────────────┐
-│                  FastAPI Backend                         │
-│  /api/portfolio/ingest  /api/chat  /api/session/:id     │
-└────────────┬───────────────────────┬────────────────────┘
-             │                       │
-┌────────────▼───────────┐  ┌────────▼──────────────────┐
-│  Guardrails Engine     │  │  LangChain Orchestrator    │
-│  · Injection detection │  │  · Claude Sonnet 4.6       │
-│  · Output validation   │  │    (+ Gemini 2.0 fallback) │
-│  · ChatResponse schema │  │  · 5 deterministic tools   │
-└────────────────────────┘  └────────┬──────────────────┘
-                                     │
-┌────────────────────────────────────▼──────────────────────┐
-│                Financial Math Engine                       │
-│  get_portfolio_allocation  │  calculate_performance_metrics│
-│  calculate_risk_metrics    │  get_diversification          │
-│  run_what_if_simulation    │  get_correlation_matrix       │
-└────────────────────────────┬──────────────────────────────┘
-                             │
-┌────────────────────────────▼──────────────────────────────┐
-│              Market Data Service                           │
-│  yfinance + requests-cache (24hr SQLite)                   │
-│  fetch_prices · fetch_benchmark · get_metadata             │
-└────────────────────────────────────────────────────────────┘
-```
-
+An institutional-grade AI portfolio analyzer that turns raw investment data into personalized, interactive financial insights through a **Chat + Canvas** interface.
 
 ---
 
-## Tech Stack
+## 🎨 Visual Walkthrough & Interface
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 19, Vite, Recharts, vanilla CSS |
-| Backend | FastAPI, uvicorn |
-| AI Orchestration | LangChain (Claude Sonnet 4.6 primary, Gemini 2.0 Flash fallback) |
-| Market Data | yfinance, requests-cache (SQLite, 24hr TTL) |
-| Math | pandas, numpy (all deterministic — LLM never computes) |
-| Validation | Pydantic v2 |
+Kalpi AI separates user interactions into a conversational chat panel and a dynamic visual canvas that displays real-time charts and financial metrics.
 
----
+### 1. Ingestion Interface
+Get started by typing your holdings naturally, pasting text, or dragging and dropping a CSV or Excel file. The system also supports uploading screenshots of investment dashboards directly.
+![Ingestion Page](docs/screenshots/ingestion_page.png)
 
-## Feature Implementation
+### 2. Portfolio Overview & Asset Allocation
+Once loaded, the default canvas shows a complete overview of holdings, purchase prices, weight allocations, and current values.
+![Overview Page](docs/screenshots/overview_page.png)
 
-### 1. Zero-Friction Portfolio Ingestion
-Three input modes handled by `backend/app/ingestion.py`:
-- **File upload** — CSV or Excel (.xlsx/.xls) via `POST /api/portfolio/ingest/file`
-- **Text paste** — Free-text like `"50% AAPL, 50% MSFT"` or `"Reliance: 10 shares"` via `POST /api/portfolio/ingest`
-- **Auto-normalization** — weights are normalized to sum=1.0; quantities are converted to value-weights via live prices
-- **Ticker validation** — auto-appends `.NS` suffix for Indian stocks that fail bare-ticker lookup
+### 3. Financial Performance Tab
+Analyze historical compound annual growth rates (CAGR), Sharpe ratios, Sortino ratios, and compare cumulative performance against benchmark indices (e.g., Nifty 50 or S&P 500).
+![Performance Page](docs/screenshots/performance_page.png)
 
-### 2. Chat + Canvas Interface
-- **Chat panel** — conversational interface with message history, typing indicator, suggested prompt chips, and prompt-injection warning banners
-- **Canvas panel** — five tabs (Performance, Risk, Diversification, Correlation, What-If) that auto-switch based on `canvas_state.view` returned by the AI
-- **Real-time sync** — every AI response includes a `canvas_state` field that drives which charts appear
+### 4. Risk & Drawdown Profile
+Uncover volatility, portfolio Beta, Value at Risk (VaR at 95%), and historical drawdown curves to expose tail risks.
+![Risk Page](docs/screenshots/risk_page.png)
 
-### 3. Deep-Dive Financial Analysis
-All metrics are computed by deterministic Python functions — the LLM is strictly an orchestrator.
+### 5. Sector Allocation & Factor Exposure
+Audit concentration risk with interactive sector breakdowns and a style-tilt radar chart mapping Size, Value, and Momentum factor overlaps.
+![Diversification Page](docs/screenshots/diversification_page.png)
 
-| Tool | Metrics |
-|---|---|
-| `calculate_performance_metrics` | CAGR, Sharpe, Sortino, active return vs benchmark |
-| `calculate_risk_metrics` | Max Drawdown, VaR (95%), Beta, annualized volatility |
-| `get_diversification_and_sector_exposure` | Sector weights, Size/Value/Momentum factor scores |
-| `get_correlation_matrix` | Pairwise return correlations (1Y daily), rendered as heatmap |
-| `run_what_if_simulation` | Side-by-side Sharpe + MDD comparison for a proposed trade |
+### 6. Asset Correlation Matrix
+Understand how assets move in tandem. This interactive daily return correlation matrix heatmap exposes hidden correlations.
+![Correlation Page](docs/screenshots/correlation_page.png)
 
-### 4. Proactive & Context-Aware Interactions
-- **Suggested prompts** — every AI response includes 2–3 `suggested_prompts` that logically follow from the current analysis
-- **What-if simulation** — mid-conversation trade swaps recompute all metrics instantly
-- **Prompt injection protection** — `guardrails.py` blocks messages containing override phrases before they reach the LLM; the frontend shows a dismissible warning banner
+### 7. What-If Simulation
+Simulate asset swaps or adjustments (e.g., *"What happens if I sell 20% of RELIANCE.NS and buy GOLDBEES.NS?"*) and view instant comparisons of Sharpe ratios and Maximum Drawdown delta.
+![What-If Simulation Page](docs/screenshots/whatif_page.png)
 
 ---
 
-## How the Agent Manages Portfolio State
+## ⚙️ System Architecture
 
-```
-Session lifecycle
-─────────────────
-1. User ingests portfolio  →  POST /api/portfolio/ingest
-                               ingest_portfolio() normalizes holdings
-                               set_portfolio(session_id, holdings) stores in RAM
+Kalpi AI is built using **React 19** on the frontend and **FastAPI** on the backend. The core coordination uses **LangChain** with **Gemini 2.5 Flash** (and automatic failover to **Gemini 2.5 Pro**, **GPT-4o-mini**, or **Claude Haiku**).
 
-2. User sends chat message  →  POST /api/chat
-                                check_injection() — blocks if unsafe
-                                session = get_or_create_session(session_id)
-                                _current_holdings = session.holdings  ← injected as context
-                                agent_executor.invoke(input, chat_history[-10:])
-                                  ↓ LLM decides which tool to call
-                                  ↓ Tool reads _current_holdings (module-level state)
-                                  ↓ Returns deterministic result
-                                parse_llm_output() validates ChatResponse schema
-                                session.history.append(...)  ← persisted across turns
-
-3. Delete session  →  DELETE /api/session/:id
-                       clear_session() removes from RAM
-```
-
-Sessions are stored in an in-memory Python dict (`_sessions: dict[str, PortfolioSession]`). The last 10 messages are injected as `chat_history` on each turn so the LLM retains conversational context without an external database.
+![System Architecture](docs/assets/architecture.svg)
 
 ---
 
-## Setup & Run
+## 💾 State Management & Session Lifecycle
+
+To support conversational context and seamless portfolio adjustments, Kalpi AI implements an in-memory session store. Here is a technical breakdown of how this state is managed, along with current architectural constraints and design decisions:
+
+1. **In-Memory Store (`InMemorySessionStore`)**: 
+   Sessions are stored in RAM within a cache (`_sessions: dict[str, PortfolioSession]`) with a 500-session limit and a 1-hour idle eviction TTL. Each session holds the current normalized holdings list and a chat history (the last 10 messages of which are passed to the LLM as windowed context).
+   
+2. **Tool Context & Concurrency Debt**: 
+   In [agent.py](file:///home/letbu/Documents/kalpi_ai/backend/app/agent.py), the active portfolio context is bound via module-level globals `_current_holdings` and `_current_session_id`. When a tool runs, it retrieves data from these variables.
+   > [!WARNING]
+   > This design is not thread-safe under concurrent requests from different sessions. It represents a conscious MVP tradeoff to keep the LangChain tool signatures clean (since LangChain tools do not receive runtime session parameters natively). In a production deployment, this state should be managed by extracting session IDs directly from tool input signatures or storing active user profiles inside a shared database / Redis cache.
+
+3. **Session Lifecycle Sequence Flow**:
+
+![Session Lifecycle](docs/assets/session-lifecycle.svg)
+
+---
+
+## 🛠️ Key Design & Engineering Decisions
+
+### 1. The Golden Rule (LLM Orchestration vs. Math)
+The LLM never computes a single number. It acts strictly as an orchestrator. If the user asks for historical volatility, the LLM parses the intent, triggers the `get_risk_metrics` tool, receives the mathematically exact metrics computed via `pandas`/`numpy` in Python, and translates those numbers into prose. This guarantees **zero mathematical hallucinations**.
+
+### 2. Deterministic Canvas Synchronization (The Visuals Fix)
+When the LLM outputs its response JSON, it is supposed to output `canvas_state.view` (e.g., `'performance'`) and duplicate the raw tool data in `canvas_state.data`. However, LLMs sometimes experience "context slip" and output the wrong view name or fail to faithfully transcribe the full tool JSON.
+* **The Fix**: The backend intercepts the agent's tool-call history. It looks up which tool was *actually* called (ground truth) using `_last_tool_called()` and overwrites both `canvas_state.view` and `canvas_state.data` in the final server response. The LLM has no control over the rendering state; the UI state is derived deterministically from which Python function ran.
+
+### 3. Production Workaround for Yahoo Finance Rate Limits
+Initially, `yfinance`'s `.info` and `.download()` methods failed under production cloud environments (such as Render) with `YFRateLimitError: Too Many Requests` due to Yahoo's strict cookie/crumb CSRF handshakes on shared hosting IP ranges.
+* **The Fix**: The market data module bypasses the standard `yfinance` library wrapper. Instead, it calls Yahoo's crumb-free `/v8/finance/chart/{symbol}` endpoint directly. This endpoint returns prices, currencies, and exchange metadata reliably without authentication.
+* **Caching**: All external market requests are cached locally in a SQLite database via `requests_cache` with a 24-hour TTL, saving bandwidth and preventing rate limit blocks on identical tickers.
+
+### 4. Mid-Chat Portfolio Updates
+A user can replace their active portfolio mid-conversation without wiping their chat thread or resetting their view:
+* **Pasted Text**: The system prompt instructs the agent that if a message looks like a portfolio table or raw holdings details, it must trigger the `update_portfolio(raw_text)` tool. This parses the text, calculates weights, overwrites the session store holdings, and returns the new baseline which is sent to the frontend via SSE.
+* **Attachments**: An attachment button in the chat panel routes CSVs or screenshots directly to `/api/portfolio/ingest/file` or `/api/portfolio/ingest/images` with the current `session_id`, updating the active RAM holdings. The frontend appends a summary of the change to the chat thread dynamically.
+
+![Mid-Chat Live Update Flow](docs/assets/live-update-flow.svg)
+
+---
+
+## 🛡️ Guardrails & Safety
+
+* **Prompt Injection Shield**: [guardrails.py](file:///home/letbu/Documents/kalpi_ai/backend/app/guardrails.py) checks incoming text against blocklists (e.g., *"ignore previous instructions"*, *"system prompt"*) using unicode-normalization to catch obfuscation tricks (like zero-width spaces or full-width homoglyphs). Inputs exceeding 1000 characters are blocked.
+* **Structured Output Validation**: LLM outputs must conform to a strict Pydantic JSON schema (`ChatResponse`). If parsing fails, a fallback parser recovers the prose text and generates a safe default schema to prevent app crashes.
+* **Rate Limiting**: Built using `slowapi`. Ingestion endpoints are restricted to 10 requests/minute, image-screenshot processing to 5/minute, and conversational chat requests to 20/minute.
+
+---
+
+## 🚀 Setup & Run Guide
 
 ### Prerequisites
-- Python 3.11+
-- Node.js 20+
-- `ANTHROPIC_API_KEY` (required for primary LLM)
-- `GOOGLE_APPLICATION_CREDENTIALS` (optional, for Gemini fallback)
+* Python 3.11+
+* Node.js 20+
+* Google Cloud Platform service account credentials (set as `GOOGLE_CREDENTIALS_JSON` in your backend `.env` for Gemini Vertex AI access).
 
-### Backend
+### 1. Backend Setup
+Navigate to the `backend/` directory, set up your virtual environment, install dependencies, and start Uvicorn:
 
 ```bash
 cd backend
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-pip install -r requirements-dev.txt  # for tests
+pip install -r requirements-dev.txt
 
-cp ../.env.example .env
-# Edit .env — set ANTHROPIC_API_KEY
+# Copy credentials and set keys
+cp .env.example .env
+# Edit .env to set GOOGLE_CREDENTIALS_JSON or ANTHROPIC_API_KEY
 
-uvicorn app.main:app --reload --port 8000
+# Start the FastAPI server
+python3 -m uvicorn app.main:app --port 8000 --reload
 ```
 
-### Frontend
+### 2. Frontend Setup
+Navigate to the `frontend/` directory, install Node packages, and run the Vite server:
 
 ```bash
 cd frontend
 npm install
-npm run dev        # starts on http://localhost:5173
+npm run dev
 ```
+Open `http://localhost:5173/` in your browser.
 
-
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Claude API key (primary LLM) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | No | Path to GCP service account JSON (Gemini fallback) |
-| `SESSION_SECRET` | No | Secret for future session signing |
-
----
-
-## Running Tests
+### 3. Running Backend Tests
+Ensure your environment is set up and execute the pytest suite (100+ tests spanning mathematical validation, ingestion, guardrails, and APIs):
 
 ```bash
 cd backend
 pytest tests/ -v
 ```
 
-103 tests across 5 modules (ingestion, market data, math engine, guardrails, agent, API).
-
 ---
 
-## Project Structure
+## 📁 Project Directory Structure
 
 ```
 kalpi_ai/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py          # FastAPI app + endpoints
-│   │   ├── ingestion.py     # CSV/Excel/text portfolio parsing
-│   │   ├── market_data.py   # yfinance data fetcher + cache
-│   │   ├── math_engine.py   # All financial calculations
-│   │   ├── guardrails.py    # Injection detection + output validation
-│   │   ├── agent.py         # LangChain orchestrator + session state
-│   ├── tests/               # 103 unit + integration tests
-│   ├── requirements.txt
-│   └── requirements-dev.txt
+│   │   ├── math_engine/       # Deterministic quantitative financial formulas
+│   │   │   ├── performance.py   # CAGR, Sharpe, Sortino, Benchmarks
+│   │   │   ├── risk.py          # Drawdowns, Volatility, VaR, Beta
+│   │   │   ├── diversification.py# Sectors, style tilts, and factor radars
+│   │   │   ├── correlation.py   # Daily return correlation matrices
+│   │   │   ├── whatif.py        # Portfolio swap trade simulations
+│   │   │   ├── health.py        # Score calculations & SWOT synthesis
+│   │   │   └── baseline.py      # Combines math results for initial state
+│   │   ├── main.py            # FastAPI endpoints, routes, and middlewares
+│   │   ├── agent.py           # LangChain ReAct agent + math tool wrappers
+│   │   ├── ingestion.py       # Parses CSV/Excel, pasted text, and screenshots
+│   │   ├── market_data.py     # Yahoo Finance direct chart query utility
+│   │   ├── guardrails.py      # Injection blocklist and LLM output parsing
+│   │   ├── session_store.py   # In-memory RAM storage with eviction TTLs
+│   │   └── models.py          # Pydantic schemas for verification
+│   ├── tests/                 # Unit & integration testing suite
+│   ├── requirements.lock      # Pinned production requirements
+│   └── requirements-dev.txt   # Test libraries (pytest, mock, respx)
 ├── frontend/
-│   └── src/
-│       ├── App.jsx
-│       ├── api/service.js
-│       └── components/
-│           ├── IngestionForm.jsx
-│           ├── ChatPanel.jsx
-│           ├── VisualCanvas.jsx
-│           └── Charts.jsx
-├── .env.example
-└── README.md
+│   ├── src/
+│   │   ├── components/        # ChatPanel, VisualCanvas, Recharts wrappers
+│   │   ├── hooks/             # useIngestion, useChat custom React hooks
+│   │   ├── api/               # REST client configurations
+│   │   ├── App.jsx            # Main app coordination and SSE handlers
+│   │   └── index.css          # Theme, layouts, and glassmorphism styling
+│   └── package.json
+├── docs/
+│   └── screenshots/           # Screenshot assets referenced in documentation
+└── README.md                  # System overview and tech specification
 ```
