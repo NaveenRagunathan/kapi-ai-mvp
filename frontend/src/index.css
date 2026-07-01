@@ -879,23 +879,178 @@ textarea {
 @media (min-width: 992px) {
   .focus-layout-diversification {
     grid-template-columns: 1fr 1fr;
+    align-items: start;
   }
 }
 
 .diversification-chart-box {
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface) 0%, rgba(255, 255, 255, 0.02) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.diversification-chart-box:hover {
+  border-color: var(--color-border-strong);
+}
+
+.diversification-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: var(--space-xs);
 }
 
 .diversification-chart-box h4 {
-  font-size: 1.1rem;
-  align-self: flex-start;
-  margin-bottom: var(--space-md);
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: var(--space-lg);
+}
+
+/* ─── Sector segmented bar + legend ─── */
+
+.sector-viz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.sector-bar {
+  display: flex;
+  width: 100%;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sector-bar-segment {
+  height: 100%;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.sector-bar-segment:hover {
+  opacity: 0.85;
+}
+
+.sector-bar-segment--unknown {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.10),
+    rgba(255, 255, 255, 0.10) 4px,
+    rgba(255, 255, 255, 0.03) 4px,
+    rgba(255, 255, 255, 0.03) 8px
+  );
+}
+
+.sector-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sector-legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.85rem;
+}
+
+.sector-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sector-legend-dot--unknown {
+  background: rgba(255, 255, 255, 0.25);
+  border: 1px dashed rgba(255, 255, 255, 0.4);
+}
+
+.sector-legend-name {
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+.sector-legend-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.sector-unknown-note {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ─── Factor radar + legend ─── */
+
+.factor-viz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.factor-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.factor-legend-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.factor-legend-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.factor-legend-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.factor-legend-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.factor-legend-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-accent);
+  font-size: 0.85rem;
+}
+
+.factor-legend-def {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
 }
 
 .focus-layout-correlation {

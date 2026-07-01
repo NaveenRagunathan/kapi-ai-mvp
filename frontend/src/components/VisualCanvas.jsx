@@ -142,10 +142,12 @@ export default function VisualCanvas({ canvasState, sessionId, baseline, loading
             {activeView === 'diversification' && (
               <div className="focus-layout-diversification">
                 <div className="diversification-chart-box">
+                  <span className="diversification-eyebrow">Concentration</span>
                   <h4>Sector Allocation</h4>
                   <SectorChart data={Object.entries(data.sectors || baseline.diversification.sectors).map(([name, value]) => ({ name, value }))} />
                 </div>
                 <div className="diversification-chart-box">
+                  <span className="diversification-eyebrow">Style Tilt</span>
                   <h4>Factor Overlaps</h4>
                   <FactorRadar data={Object.entries(data.factor_exposures || baseline.diversification.factor_exposures).map(([name, value]) => ({ name, value }))} />
                 </div>
