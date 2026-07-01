@@ -217,6 +217,36 @@ def _get_agent():
 
 
 # ---------------------------------------------------------------------------
+# Canvas view resolution
+# ---------------------------------------------------------------------------
+
+# Maps each math tool to the canvas view that displays its output. The LLM
+# also picks canvas_state.view itself, but it occasionally mislabels it
+# (e.g. leaves it on a previous turn's view) even when it called the right
+# tool and answered correctly in text. Since we know exactly which tool ran,
+# we can deterministically override a mismatched view instead of trusting
+# the LLM's JSON field to be internally consistent with its own tool calls.
+_TOOL_TO_VIEW = {
+    "calculate_performance": "performance",
+    "get_risk_metrics": "risk",
+    "get_diversification": "diversification",
+    "simulate_trade": "whatif",
+    "get_correlation_matrix_tool": "correlation",
+    "get_portfolio_allocation": "none",
+}
+
+
+def _last_tool_called(messages: list) -> str | None:
+    """Return the name of the last math tool invoked in this turn, if any."""
+    last_tool = None
+    for m in messages:
+        tool_calls = getattr(m, "tool_calls", None)
+        if tool_calls:
+            last_tool = tool_calls[-1].get("name")
+    return last_tool
+
+
+# ---------------------------------------------------------------------------
 # Main Chat Function
 # ---------------------------------------------------------------------------
 
@@ -256,6 +286,14 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
         response = parse_llm_output(raw_output)
     except ValueError:
         response = make_fallback_response(raw_output)
+
+    # The LLM sometimes mislabels canvas_state.view (e.g. leaves it on the
+    # previous turn's view) even when it called the right tool and answered
+    # correctly. Override the view to match whichever math tool actually ran.
+    last_tool = _last_tool_called(result.get("messages", [])) if isinstance(result, dict) else None
+    expected_view = _TOOL_TO_VIEW.get(last_tool)
+    if expected_view and response.canvas_state.view != expected_view:
+        response.canvas_state.view = expected_view
 
     session.history.append({"role": "user", "content": user_message})
     session.history.append({"role": "assistant", "content": _normalize_llm_raw(raw_output)})
