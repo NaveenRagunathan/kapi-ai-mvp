@@ -1,5 +1,56 @@
 import { useState, useRef, useEffect } from 'react';
 
+function formatMessageText(text) {
+  if (!text) return '';
+  
+  const lines = text.split('\n');
+  return (
+    <div className="formatted-message">
+      {lines.map((line, lineIdx) => {
+        const trimmed = line.trim();
+        const isBullet = trimmed.startsWith('* ') || trimmed.startsWith('- ');
+        let content = line;
+        
+        if (isBullet) {
+          content = trimmed.substring(2);
+        }
+        
+        const parts = [];
+        const regex = /\*\*(.*?)\*\*/g;
+        let match;
+        let lastIndex = 0;
+        
+        while ((match = regex.exec(content)) !== null) {
+          if (match.index > lastIndex) {
+            parts.push(content.substring(lastIndex, match.index));
+          }
+          parts.push(<strong key={match.index}>{match[1]}</strong>);
+          lastIndex = regex.lastIndex;
+        }
+        
+        if (lastIndex < content.length) {
+          parts.push(content.substring(lastIndex));
+        }
+        
+        if (isBullet) {
+          return (
+            <div key={lineIdx} className="bullet-item" style={{ display: 'flex', alignItems: 'flex-start', margin: '4px 0 4px 12px' }}>
+              <span style={{ marginRight: '8px', color: 'var(--color-accent)' }}>•</span>
+              <div>{parts}</div>
+            </div>
+          );
+        }
+        
+        return (
+          <p key={lineIdx} style={{ margin: '6px 0' }}>
+            {parts}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ChatPanel({ messages, onSend, loading, suggestedPrompts, onPromptClick, injectionWarning, onDismissWarning }) {
   const [input, setInput] = useState('');
   const bottomRef = useRef(null);
@@ -51,19 +102,18 @@ export default function ChatPanel({ messages, onSend, loading, suggestedPrompts,
             {msg.role === 'assistant' && (
               <div className="chat-avatar" aria-hidden="true">K</div>
             )}
-            <div className="chat-bubble">{msg.text}</div>
-          </div>
-        ))}
-        {loading && (
-          <div className="chat-msg assistant">
-            <div className="chat-avatar" aria-hidden="true">K</div>
-            <div className="chat-bubble chat-thinking" aria-label="Analyst is thinking">
-              <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-              <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-              <span className="typing-dot" style={{ animationDelay: '300ms' }} />
+            <div className="chat-bubble">
+              {msg.statusText && !msg.text ? (
+                <div className="chat-status-loading">
+                  <span className="status-spinner-dot" />
+                  <span className="status-text">{msg.statusText}</span>
+                </div>
+              ) : (
+                formatMessageText(msg.text)
+              )}
             </div>
           </div>
-        )}
+        ))}
         <div ref={bottomRef} />
       </div>
 

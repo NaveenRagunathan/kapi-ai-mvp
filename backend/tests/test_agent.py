@@ -47,7 +47,7 @@ def _make_mock_executor(output: str) -> MagicMock:
 class TestGetOrCreateSession:
     def setup_method(self):
         # Clear internal state before each test
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_creates_new_session(self):
         session = get_or_create_session("abc")
@@ -71,7 +71,7 @@ class TestGetOrCreateSession:
 
 class TestSetPortfolio:
     def setup_method(self):
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_stores_holdings_in_session(self):
         holdings = [{"ticker": "RELIANCE.NS", "weight": 0.6}, {"ticker": "TCS.NS", "weight": 0.4}]
@@ -80,9 +80,9 @@ class TestSetPortfolio:
         assert session.holdings == holdings
 
     def test_creates_session_if_not_exists(self):
-        assert "new_sess" not in agent_module._sessions
+        assert "new_sess" not in agent_module._session_store._cache
         set_portfolio("new_sess", [{"ticker": "INFY.NS", "weight": 1.0}])
-        assert "new_sess" in agent_module._sessions
+        assert "new_sess" in agent_module._session_store._cache
 
     def test_overwrites_existing_holdings(self):
         set_portfolio("sess2", [{"ticker": "RELIANCE.NS", "weight": 1.0}])
@@ -93,13 +93,13 @@ class TestSetPortfolio:
 
 class TestClearSession:
     def setup_method(self):
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_removes_session(self):
         get_or_create_session("to_clear")
-        assert "to_clear" in agent_module._sessions
+        assert "to_clear" in agent_module._session_store._cache
         clear_session("to_clear")
-        assert "to_clear" not in agent_module._sessions
+        assert "to_clear" not in agent_module._session_store._cache
 
     def test_no_error_on_missing_session(self):
         # Should not raise
@@ -112,7 +112,7 @@ class TestClearSession:
 
 class TestChatUpdatesHistory:
     def setup_method(self):
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_history_updated_after_chat(self):
         session_id = "hist_test"
@@ -181,7 +181,7 @@ class TestChatUpdatesHistory:
 
 class TestChatFallbackOnInvalidJson:
     def setup_method(self):
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_fallback_on_invalid_json(self):
         session_id = "fallback_test"
@@ -238,7 +238,7 @@ class TestChatFallbackOnInvalidJson:
 
 class TestCurrentHoldingsContext:
     def setup_method(self):
-        agent_module._sessions.clear()
+        agent_module._session_store._cache.clear()
 
     def test_holdings_set_as_current_before_invoke(self):
         session_id = "holdings_ctx"

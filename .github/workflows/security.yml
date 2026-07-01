@@ -1,0 +1,22 @@
+name: Security Audit
+
+on:
+  push:
+    paths:
+      - "backend/requirements.txt"
+      - "backend/requirements.lock"
+  pull_request:
+    paths:
+      - "backend/requirements.txt"
+      - "backend/requirements.lock"
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: pip-audit -r backend/requirements.lock

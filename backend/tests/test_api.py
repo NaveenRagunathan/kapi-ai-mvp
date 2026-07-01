@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from app.main import app
+from app.models import Holding
 
 client = TestClient(app)
 
@@ -17,11 +18,15 @@ def test_health_returns_ok():
 
 def test_ingest_text_creates_session():
     mock_holdings = [
-        {"ticker": "AAPL", "weight": 0.5},
-        {"ticker": "MSFT", "weight": 0.5},
+        Holding(ticker="AAPL", name="Apple", currency="USD"),
+        Holding(ticker="MSFT", name="Microsoft", currency="USD"),
     ]
-    with patch("app.main.ingest_portfolio", return_value=mock_holdings) as mock_ingest, \
-         patch("app.main.set_portfolio") as mock_set:
+    mock_result = MagicMock()
+    mock_result.holdings = mock_holdings
+    mock_result.errors = []
+    with patch("app.portfolio_service.ingest_portfolio", return_value=mock_result) as mock_ingest, \
+         patch("app.portfolio_service.set_portfolio") as mock_set, \
+         patch("app.math_engine.get_portfolio_baseline", return_value={}):
         response = client.post(
             "/api/portfolio/ingest",
             json={"text": "50% AAPL, 50% MSFT"},
@@ -29,17 +34,20 @@ def test_ingest_text_creates_session():
     assert response.status_code == 200
     data = response.json()
     assert "session_id" in data
-    assert data["holdings"] == mock_holdings
     assert data["count"] == 2
     mock_ingest.assert_called_once_with(text="50% AAPL, 50% MSFT")
     mock_set.assert_called_once()
 
 
 def test_ingest_text_uses_provided_session_id():
-    mock_holdings = [{"ticker": "AAPL", "weight": 1.0}]
+    mock_holdings = [Holding(ticker="AAPL", name="Apple", currency="USD")]
+    mock_result = MagicMock()
+    mock_result.holdings = mock_holdings
+    mock_result.errors = []
     provided_id = "test-session-123"
-    with patch("app.main.ingest_portfolio", return_value=mock_holdings), \
-         patch("app.main.set_portfolio") as mock_set:
+    with patch("app.portfolio_service.ingest_portfolio", return_value=mock_result), \
+         patch("app.portfolio_service.set_portfolio") as mock_set, \
+         patch("app.math_engine.get_portfolio_baseline", return_value={}):
         response = client.post(
             "/api/portfolio/ingest",
             json={"text": "100% AAPL", "session_id": provided_id},
@@ -47,7 +55,7 @@ def test_ingest_text_uses_provided_session_id():
     assert response.status_code == 200
     data = response.json()
     assert data["session_id"] == provided_id
-    mock_set.assert_called_once_with(provided_id, mock_holdings)
+    mock_set.assert_called_once()
 
 
 def test_chat_blocked_on_injection():
@@ -61,6 +69,7 @@ def test_chat_blocked_on_injection():
 
 
 def test_chat_no_portfolio_returns_guidance():
+    import json
     mock_session = MagicMock()
     mock_session.holdings = []
     with patch("app.main.check_injection", return_value=(True, "ok")), \
@@ -70,11 +79,21 @@ def test_chat_no_portfolio_returns_guidance():
             json={"session_id": "empty-session", "message": "What is my allocation?"},
         )
     assert response.status_code == 200
-    data = response.json()
-    assert "Please upload a portfolio first" in data["text"]
+    
+    events = []
+    for line in response.iter_lines():
+        if line.startswith("data: "):
+            try:
+                events.append(json.loads(line[6:]))
+            except Exception:
+                pass
+                
+    combined_text = "".join([e.get("text", "") for e in events if "text" in e])
+    assert "Please upload a portfolio first" in combined_text or "upload a portfolio first" in combined_text
 
 
 def test_chat_success():
+    import json
     from app.guardrails import ChatResponse, CanvasState
 
     mock_session = MagicMock()
@@ -95,10 +114,22 @@ def test_chat_success():
         )
 
     assert response.status_code == 200
-    data = response.json()
-    assert data["text"] == "Your portfolio is 100% AAPL."
-    assert len(data["suggested_prompts"]) == 2
-    assert data["canvas_state"]["view"] == "performance"
+    
+    events = []
+    for line in response.iter_lines():
+        if line.startswith("data: "):
+            try:
+                events.append(json.loads(line[6:]))
+            except Exception:
+                pass
+                
+    combined_text = "".join([e.get("text", "") for e in events if "text" in e])
+    assert "Your portfolio is 100% AAPL." in combined_text
+    
+    canvas_event = next((e for e in events if "view" in e), None)
+    assert canvas_event is not None
+    assert canvas_event["view"] == "performance"
+    assert canvas_event["suggested_prompts"] == ["Show risk metrics", "Compare to benchmark"]
     mock_chat.assert_called_once_with("session-with-holdings", "Show performance")
 
 

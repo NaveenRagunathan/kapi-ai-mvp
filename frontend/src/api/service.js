@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8000';
+const BASE = '';
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -50,6 +50,52 @@ export async function sendChatMessage(sessionId, message) {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId, message }),
   });
+}
+
+export async function sendChatMessageStream(sessionId, message, onEvent) {
+  const res = await fetch(`${BASE}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, message }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let detail = text;
+    try { detail = JSON.parse(text).detail || text; } catch {}
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentEvent = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    let lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (let line of lines) {
+      line = line.trim();
+      if (!line) continue;
+
+      if (line.startsWith('event:')) {
+        currentEvent = line.replace('event:', '').trim();
+      } else if (line.startsWith('data:')) {
+        const dataStr = line.replace('data:', '').trim();
+        try {
+          const data = JSON.parse(dataStr);
+          onEvent({ event: currentEvent, data });
+        } catch (e) {
+          console.error('Failed to parse SSE line data:', dataStr, e);
+        }
+        currentEvent = '';
+      }
+    }
+  }
 }
 
 export async function getCorrelationMatrix(sessionId) {

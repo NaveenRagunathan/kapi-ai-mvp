@@ -1,13 +1,19 @@
-"""LangChain agent orchestration for portfolio analysis queries."""
+"""LangChain agent orchestration — Gemini Flash (primary) + Gemini Pro (fallback).
 
+Auth: Google service account via GOOGLE_CREDENTIALS_JSON in .env.
+Requires: Gemini API enabled at https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com
+"""
+
+import logging
 import os
-from dataclasses import dataclass, field
+import json
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.tools import tool
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_google_vertexai import ChatVertexAI
 
 from app.math_engine import (
     calculate_performance_metrics,
@@ -16,41 +22,39 @@ from app.math_engine import (
     run_what_if_simulation,
     get_correlation_matrix,
 )
-from app.guardrails import ChatResponse, parse_llm_output, make_fallback_response
+from app.guardrails import ChatResponse, parse_llm_output, make_fallback_response, _normalize_llm_raw
+from app.session_store import PortfolioSession, InMemorySessionStore
 
 
 # ---------------------------------------------------------------------------
 # Session State
 # ---------------------------------------------------------------------------
 
-@dataclass
-class PortfolioSession:
-    session_id: str
-    holdings: list[dict] = field(default_factory=list)
-    history: list[dict] = field(default_factory=list)  # {"role": "user"|"assistant", "content": str}
-
-
-# In-memory store
-_sessions: dict[str, PortfolioSession] = {}
+_session_store = InMemorySessionStore(maxsize=500, ttl=3600)
 
 
 def get_or_create_session(session_id: str) -> PortfolioSession:
-    if session_id not in _sessions:
-        _sessions[session_id] = PortfolioSession(session_id=session_id)
-    return _sessions[session_id]
+    session = _session_store.get(session_id)
+    if session is None:
+        logger.info("Creating new session: %s", session_id)
+        session = PortfolioSession(session_id=session_id)
+        _session_store.set(session_id, session)
+    return session
 
 
 def set_portfolio(session_id: str, holdings: list[dict]) -> None:
     session = get_or_create_session(session_id)
     session.holdings = holdings
+    logger.info("Portfolio set for session %s: %d holdings", session_id, len(holdings))
 
 
 def clear_session(session_id: str) -> None:
-    _sessions.pop(session_id, None)
+    _session_store.delete(session_id)
+    logger.info("Session cleared: %s", session_id)
 
 
 # ---------------------------------------------------------------------------
-# Tool context (set before each chat() call)
+# Tool context
 # ---------------------------------------------------------------------------
 
 _current_holdings: list[dict] = []
@@ -68,33 +72,56 @@ def get_portfolio_allocation() -> dict:
 
 @tool
 def calculate_performance(benchmark_ticker: str = "^NSEI", timeframe: str = "1y") -> dict:
-    """Calculate portfolio performance metrics: CAGR, Sharpe ratio, Sortino ratio vs benchmark."""
+    """Calculate portfolio performance metrics: CAGR, Sharpe ratio, Sortino ratio vs benchmark.
+    Use benchmark_ticker='^NSEI' for Indian portfolios, '^GSPC' for US portfolios."""
     return calculate_performance_metrics(_current_holdings, benchmark_ticker, timeframe)
 
 
 @tool
 def get_risk_metrics() -> dict:
-    """Calculate portfolio risk: Value at Risk, Maximum Drawdown, Beta, Volatility."""
+    """Calculate portfolio risk metrics: Value at Risk (95% and 99%), CVaR/Expected Shortfall,
+    Maximum Drawdown, Portfolio Beta, and Annualized Volatility."""
     return calculate_risk_metrics(_current_holdings)
 
 
 @tool
 def get_diversification() -> dict:
-    """Analyze portfolio sector concentration and factor exposures (Size, Value, Momentum)."""
+    """Analyze portfolio sector concentration and factor exposures (Size, Value, Momentum).
+    Call this for questions about sector exposure, concentration risk, or factor overlap."""
     return get_diversification_and_sector_exposure(_current_holdings)
+
+
+def _resolve_ticker(ticker: str) -> str:
+    """Map a bare ticker symbol to its validated version found in current holdings.
+    Falls back to ticker+'.NS' if not found in holdings."""
+    # Check holdings first (they are already validated with correct suffixes)
+    for h in _current_holdings:
+        ht = h["ticker"]
+        if ht == ticker or ht.startswith(ticker + "."):
+            return ht
+    # Fallback: add .NS for Indian tickers without suffix
+    if "." not in ticker:
+        return ticker + ".NS"
+    return ticker
 
 
 @tool
 def simulate_trade(sell_ticker: str, sell_weight: float, buy_ticker: str) -> dict:
-    """Simulate swapping a portion of one holding for another and compare Sharpe/drawdown."""
-    return run_what_if_simulation(_current_holdings, sell_ticker, sell_weight, buy_ticker)
+    """Simulate the impact of swapping sell_weight of sell_ticker for buy_ticker.
+    Returns comparison of original vs simulated Sharpe ratio and Max Drawdown.
+    sell_weight should be between 0.0 and 1.0 (e.g. 0.2 = 20%).
+    Tickers will be auto-resolved to their full suffix (e.g. GOLDBEES → GOLDBEES.NS)."""
+    resolved_sell = _resolve_ticker(sell_ticker)
+    resolved_buy = _resolve_ticker(buy_ticker)
+    return run_what_if_simulation(_current_holdings, resolved_sell, sell_weight, resolved_buy)
 
 
 @tool
 def get_correlation_matrix_tool() -> dict:
-    """Compute the pairwise return correlation matrix for all portfolio holdings. Use when the user asks about correlations, diversification quality, or how holdings move together."""
-    from app.math_engine import get_correlation_matrix as _calc
-    return _calc(_current_holdings)
+    """Compute the pairwise daily return correlation matrix for all portfolio holdings.
+    Call this when the user asks about correlations, diversification quality,
+    or how holdings move together."""
+    return get_correlation_matrix(_current_holdings)
 
 
 _TOOLS = [
@@ -112,34 +139,71 @@ _TOOLS = [
 
 SYSTEM_PROMPT = """You are an institutional-grade portfolio analyst for Kalpi Capital.
 
-RULES (never break these):
-1. You MUST call tools to get all financial metrics. Never invent numbers or do math yourself.
-2. Always respond with valid JSON matching this exact schema:
-   {"text": "...", "suggested_prompts": ["...", "..."], "canvas_state": {"view": "performance"|"risk"|"diversification"|"whatif"|"none", "data": {...}}}
-3. Set canvas_state.view to the most relevant analysis type based on what was discussed.
-4. Include 2-3 suggested_prompts that logically follow from the current analysis.
-5. canvas_state.data should contain the raw tool result for the frontend to visualize.
+ABSOLUTE RULES — never break these:
+1. ALWAYS call the appropriate tool to get any financial number. Never invent or estimate metrics.
+2. ALWAYS respond with a valid JSON object matching EXACTLY this schema — nothing else:
+   {
+     "text": "<rich plain-English analysis with key numbers from tools>",
+     "suggested_prompts": ["<follow-up question 1>", "<follow-up question 2>", "<follow-up question 3>"],
+     "canvas_state": {
+       "view": "<one of: performance | risk | diversification | whatif | correlation | none>",
+       "data": { <the raw dict returned by the tool you called> }
+     }
+   }
+3. canvas_state.view must match the analysis:
+   - performance / returns / CAGR / Sharpe query → "performance"
+   - risk / drawdown / VaR / beta / CVaR query → "risk"
+   - sector / factor / diversification / concentration query → "diversification"
+   - what-if / swap / simulate / replace query → "whatif"
+   - correlation / how holdings move / matrix query → "correlation"
+   - allocation / holdings / weights query → "none"
+4. canvas_state.data must be the FULL dict returned by the tool.
+5. suggested_prompts must be 3 specific, actionable follow-up questions.
+6. In text: cite key numbers, compare to benchmarks, give actionable insights. Be specific.
+7. For Indian portfolios, default benchmark is ^NSEI (Nifty 50).
+8. Use a professional, clean, conversational, and interactive tone. Avoid AI-sloppy phrasing, robotic patterns, or overly dense tables/text blocks.
+9. Keep markdown formatting extremely clean. Use bulleted lists properly (e.g. `* Item text` or `* **Item Name**: description`). Never mix bold markers and lists in a confusing way (e.g., avoid `* **Item**:` on a line by itself).
 
-You are analyzing a portfolio. The user may ask about returns, risk, diversification, or what-if scenarios."""
+You only discuss portfolio analysis. Respond only in the JSON schema above."""
 
 
 # ---------------------------------------------------------------------------
-# Agent Builder
+# LLM Builder — Gemini 2.5 Flash (primary) + Gemini 2.5 Pro (fallback) via Vertex AI
 # ---------------------------------------------------------------------------
+
+def _setup_vertex_credentials():
+    """Write service account JSON to a temp file and set GOOGLE_APPLICATION_CREDENTIALS."""
+    import tempfile
+    creds_str = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    if not creds_str:
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON not set in .env")
+    info = json.loads(creds_str)
+    tf = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+    json.dump(info, tf)
+    tf.close()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tf.name
+    return info.get("project_id", "")
+
 
 def _build_agent():
-    primary = ChatAnthropic(
-        model="claude-sonnet-4-6",
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    )
-    fallback = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
-    llm = primary.with_fallbacks([fallback])
+    project_id = _setup_vertex_credentials()
+    location = "us-central1"
 
-    return create_agent(
-        llm,
-        tools=_TOOLS,
-        system_prompt=SYSTEM_PROMPT,
+    flash = ChatVertexAI(
+        model_name="gemini-2.5-flash",
+        project=project_id,
+        location=location,
+        temperature=0.1,
     )
+    pro = ChatVertexAI(
+        model_name="gemini-2.5-pro",
+        project=project_id,
+        location=location,
+        temperature=0.1,
+    )
+    llm = flash.with_fallbacks([pro])
+    print(f"[agent] Gemini 2.5 Flash (primary) + Pro (fallback) on Vertex AI {location}")
+    return create_agent(llm, tools=_TOOLS, system_prompt=SYSTEM_PROMPT)
 
 
 _agent_executor = None
@@ -163,7 +227,6 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
 
     executor = _get_agent()
 
-    # Build the message list: history (last 10) + current user message
     messages: list = []
     for m in session.history[-10:]:
         if m["role"] == "user":
@@ -181,8 +244,6 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
         "messages": messages,
     })
 
-    # The new create_agent returns AgentState with a messages list;
-    # fall back to an "output" key for compatibility with mocked AgentExecutor.
     if isinstance(result, dict) and "output" in result:
         raw_output = result["output"]
     elif isinstance(result, dict) and "messages" in result:
@@ -196,8 +257,7 @@ def chat(session_id: str, user_message: str) -> ChatResponse:
     except ValueError:
         response = make_fallback_response(raw_output)
 
-    # Update history
     session.history.append({"role": "user", "content": user_message})
-    session.history.append({"role": "assistant", "content": raw_output})
+    session.history.append({"role": "assistant", "content": _normalize_llm_raw(raw_output)})
 
     return response

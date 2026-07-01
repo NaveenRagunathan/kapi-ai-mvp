@@ -1,50 +1,20 @@
-import { useState, useRef, useCallback } from 'react';
-import { ingestPortfolioFile, ingestPortfolioText } from '../api/service';
+import { useIngestion } from '../hooks/useIngestion';
+import FormatGuide from './FormatGuide';
 
-export default function IngestionForm({ onIngested }) {
-  const [mode, setMode] = useState('text');
-  const [text, setText] = useState('');
-  const [dragOver, setDragOver] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const fileRef = useRef(null);
+export default function IngestionForm({ onIngestStart, externalError }) {
+  const {
+    mode, setMode,
+    text, setText,
+    dragOver, setDragOver,
+    fileRef,
+    handleFile, handleDrop, handleTextSubmit,
+  } = useIngestion(onIngestStart);
 
-  const handleFile = useCallback(async (file) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await ingestPortfolioFile(file);
-      onIngested(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [onIngested]);
-
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
-
-  const handleTextSubmit = useCallback(async () => {
-    if (!text.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await ingestPortfolioText(text);
-      onIngested(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [text, onIngested]);
+  const error = externalError;
 
   return (
     <div className="ingestion-page">
+
       {/* Hero */}
       <div className="ingestion-hero">
         <div className="hero-glow" aria-hidden="true" />
@@ -54,14 +24,14 @@ export default function IngestionForm({ onIngested }) {
         </div>
         <h1 className="hero-heading">
           Portfolio Intelligence<br />
-          <span className="hero-accent">Built for Every Investor</span>
+          <span className="hero-accent">Built for Every Investor {' '}</span>
         </h1>
         <p className="hero-sub">
-          Upload your holdings and get institutional-grade insights — Sharpe ratio, VaR, sector exposure, and AI-driven what-if simulations — in seconds.
+          Drop in your holdings and get a full institutional-grade breakdown Sharpe ratio, max drawdown, sector exposure, factor overlaps, and AI-driven simulations.
         </p>
         <div className="hero-pills">
           <span className="hero-pill">Sharpe &amp; Sortino</span>
-          <span className="hero-pill">Max Drawdown</span>
+          <span className="hero-pill">Max Drawdown · VaR</span>
           <span className="hero-pill">Factor Exposure</span>
           <span className="hero-pill">Sector Heatmap</span>
           <span className="hero-pill">What-If Scenarios</span>
@@ -88,34 +58,24 @@ export default function IngestionForm({ onIngested }) {
         {mode === 'text' ? (
           <div className="text-area-container">
             <textarea
-              className={`text-area ${loading ? 'state-loading' : ''}`}
-              placeholder={`Try any format:\n\n50% RELIANCE.NS, 30% TCS.NS, 20% INFY.NS\n\nOr with quantities:\nReliance: 10 shares\nTCS: 5 shares\n\nOr US stocks:\nAAPL 0.40, MSFT 0.35, GOOGL 0.25`}
+              className="text-area"
+              placeholder={`Describe your portfolio naturally — AI reads any format:\n\nRELIANCE.NS: 10 shares @ 2450.50\nTCS.NS: 5 shares @ 3210.00\nGOLDBEES.NS: 200 qty @ 45.20\nAAPL: 25 shares @ 175.20`}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              rows={7}
-              disabled={loading}
+              rows={5}
             />
             <button
               className="btn-primary submit-btn"
               onClick={handleTextSubmit}
-              disabled={loading || !text.trim()}
+              disabled={!text.trim()}
             >
-              {loading ? (
-                <>
-                  <span className="dot-pulse" />
-                  Analyzing&hellip;
-                </>
-              ) : (
-                <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                  Analyze Portfolio
-                </>
-              )}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              Analyze Portfolio
             </button>
           </div>
         ) : (
           <div
-            className={`drop-zone ${dragOver ? 'drag-over' : ''} ${loading ? 'state-loading' : ''}`}
+            className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
@@ -125,22 +85,15 @@ export default function IngestionForm({ onIngested }) {
             onKeyDown={(e) => e.key === 'Enter' && fileRef.current?.click()}
             aria-label="Drop your CSV or Excel file here"
           >
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              hidden
-              onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
-            />
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" hidden
+              onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])} />
             <div className="drop-zone-icon" aria-hidden="true">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
               </svg>
             </div>
-            <p className="drop-zone-text">
-              {loading ? 'Processing your portfolio\u2026' : dragOver ? 'Release to upload' : 'Drop CSV or Excel here'}
-            </p>
-            <p className="drop-zone-hint">Needs Ticker/Symbol + Weight/Quantity columns &middot; or click to browse</p>
+            <p className="drop-zone-text">{dragOver ? 'Release to upload' : 'Drop CSV or Excel here'}</p>
+            <p className="drop-zone-hint">Any column names work — AI maps them &middot; click to browse</p>
           </div>
         )}
 
@@ -151,6 +104,9 @@ export default function IngestionForm({ onIngested }) {
           </div>
         )}
       </div>
+
+      <FormatGuide />
+
     </div>
   );
 }

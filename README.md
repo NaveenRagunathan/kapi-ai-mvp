@@ -38,7 +38,6 @@ An institutional-grade AI portfolio analyzer that turns raw investment data into
 └────────────────────────────────────────────────────────────┘
 ```
 
-Also ships a standalone **FastMCP server** that exposes the math engine as MCP tools for Claude Desktop / any MCP client.
 
 ---
 
@@ -51,7 +50,6 @@ Also ships a standalone **FastMCP server** that exposes the math engine as MCP t
 | AI Orchestration | LangChain (Claude Sonnet 4.6 primary, Gemini 2.0 Flash fallback) |
 | Market Data | yfinance, requests-cache (SQLite, 24hr TTL) |
 | Math | pandas, numpy (all deterministic — LLM never computes) |
-| MCP | FastMCP SDK |
 | Validation | Pydantic v2 |
 
 ---
@@ -145,24 +143,6 @@ npm install
 npm run dev        # starts on http://localhost:5173
 ```
 
-### MCP Server (optional — for Claude Desktop)
-
-```bash
-cd backend
-python mcp_server_runner.py
-```
-
-Add to Claude Desktop's `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "kalpi-portfolio": {
-      "command": "python",
-      "args": ["/path/to/backend/mcp_server_runner.py"]
-    }
-  }
-}
-```
 
 ---
 
@@ -199,11 +179,9 @@ kalpi_ai/
 │   │   ├── math_engine.py   # All financial calculations
 │   │   ├── guardrails.py    # Injection detection + output validation
 │   │   ├── agent.py         # LangChain orchestrator + session state
-│   │   └── mcp_server.py    # FastMCP tool server
 │   ├── tests/               # 103 unit + integration tests
 │   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   └── mcp_server_runner.py
+│   └── requirements-dev.txt
 ├── frontend/
 │   └── src/
 │       ├── App.jsx

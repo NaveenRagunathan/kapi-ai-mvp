@@ -275,3 +275,88 @@ class TestGetMetadata:
         assert set(result.keys()) == set(tickers)
         for t in tickers:
             assert result[t]["sector"] == f"Sector_{t}"
+
+
+# ---------------------------------------------------------------------------
+# resolve_ticker_metadata
+# ---------------------------------------------------------------------------
+
+class TestResolveTickerMetadata:
+    """Tests for market_data.resolve_ticker_metadata — real India/US differentiation."""
+
+    @patch("app.market_data.yf.Ticker")
+    def test_us_ticker_currency_and_exchange(self, mock_ticker_cls):
+        mock_ticker_cls.return_value = _make_mock_ticker({
+            "currency": "USD", "exchange": "NMS", "quoteType": "EQUITY",
+            "shortName": "Apple Inc", "regularMarketPrice": 180.0,
+            "country": "United States",
+        })
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("AAPL")
+        assert result["valid"] is True
+        assert result["ticker"] == "AAPL"
+        assert result["currency"] == "USD"
+        assert result["exchange"] == "NMS"
+        assert result["asset_class"] == "Equity"
+
+    @patch("app.market_data.yf.Ticker")
+    def test_indian_ticker_currency_and_exchange(self, mock_ticker_cls):
+        mock_ticker_cls.return_value = _make_mock_ticker({
+            "currency": "INR", "exchange": "NSI", "quoteType": "EQUITY",
+            "shortName": "Reliance Industries", "regularMarketPrice": 2450.0,
+            "country": "India",
+        })
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("RELIANCE.NS")
+        assert result["currency"] == "INR"
+        assert result["exchange"] == "NSI"
+
+    @patch("app.market_data.yf.Ticker")
+    def test_bare_indian_ticker_ns_fallback_reads_real_currency(self, mock_ticker_cls):
+        """Bare 'RELIANCE' should retry with .NS, then read currency from that
+        result rather than assuming INR from the suffix."""
+        def side_effect(t):
+            if t == "RELIANCE":
+                return _make_mock_ticker({})
+            if t == "RELIANCE.NS":
+                return _make_mock_ticker({
+                    "currency": "INR", "exchange": "NSI", "quoteType": "EQUITY",
+                    "shortName": "Reliance Industries", "regularMarketPrice": 2450.0,
+                })
+            return _make_mock_ticker({})
+
+        mock_ticker_cls.side_effect = side_effect
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("RELIANCE")
+        assert result["valid"] is True
+        assert result["ticker"] == "RELIANCE.NS"
+        assert result["currency"] == "INR"
+
+    @patch("app.market_data.yf.Ticker")
+    def test_invalid_ticker(self, mock_ticker_cls):
+        mock_ticker_cls.return_value = _make_mock_ticker({})
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("BOGUSXYZ")
+        assert result["valid"] is False
+        assert result["currency"] == "OTHER"
+
+    @patch("app.market_data.yf.Ticker")
+    def test_unmapped_currency_falls_back_to_other(self, mock_ticker_cls):
+        mock_ticker_cls.return_value = _make_mock_ticker({
+            "currency": "EUR", "exchange": "PAR", "quoteType": "EQUITY",
+            "shortName": "Some EU Co", "regularMarketPrice": 50.0,
+        })
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("MC.PA")
+        assert result["valid"] is True
+        assert result["currency"] == "OTHER"

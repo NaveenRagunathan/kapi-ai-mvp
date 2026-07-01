@@ -54,6 +54,115 @@ def fetch_benchmark(ticker: str = "^NSEI", period: str = "3y") -> pd.Series:
     return data
 
 
+def _ticker_info_valid(info: dict) -> bool:
+    """Return True when a yfinance info dict indicates a real, tradeable instrument.
+
+    yfinance returns an empty or near-empty dict for tickers that don't exist.
+    """
+    return bool(info) and (
+        "regularMarketPrice" in info
+        or "currentPrice" in info
+        or "previousClose" in info
+        or "shortName" in info
+        or "longName" in info
+    )
+
+
+_CURRENCY_MAP = {"INR": "INR", "USD": "USD"}
+
+
+def _bare_ticker_likely_indian(ticker: str) -> bool:
+    """Heuristic: common Indian tickers are 1-4 uppercase letters, no dot/suffix."""
+    return (
+        "." not in ticker
+        and ticker.isascii()
+        and ticker.isalpha()
+        and ticker.isupper()
+        and len(ticker) <= 15
+    )
+
+
+def resolve_ticker_metadata(ticker: str) -> dict:
+    """Single source of truth for ticker existence + currency/exchange/asset-class.
+
+    For bare tickers without a suffix (e.g. "RELIANCE", "ICICIBANK") the .NS
+    suffix is tried FIRST because yfinance often returns a wrong/similar-named
+    entity for bare Indian tickers (e.g. "ICICIBANK" resolves to a USD-traded
+    stub).  If the .NS suffix fails, the bare ticker is tried as a fallback,
+    which correctly resolves US tickers like "AAPL".
+
+    Returns:
+        {
+            "valid": bool,
+            "ticker": str,          # possibly suffix-corrected, e.g. "RELIANCE.NS"
+            "name": str,
+            "currency": "INR" | "USD" | "OTHER",
+            "exchange": str | None,
+            "country": str | None,
+            "asset_class": "Equity" | "ETF" | "Crypto",
+        }
+    """
+    def _build(t: str, info: dict) -> dict:
+        quote_type = info.get("quoteType", "")
+        if quote_type == "ETF":
+            asset_class = "ETF"
+        elif quote_type == "CRYPTOCURRENCY":
+            asset_class = "Crypto"
+        else:
+            asset_class = "Equity"
+
+        currency = _CURRENCY_MAP.get(info.get("currency"), "OTHER")
+
+        return {
+            "valid": True,
+            "ticker": t,
+            "name": info.get("shortName") or info.get("longName") or t,
+            "currency": currency,
+            "exchange": info.get("exchange"),
+            "country": info.get("country"),
+            "asset_class": asset_class,
+        }
+
+    # For bare tickers (no dot suffix), try .NS first — yfinance often returns
+    # a wrong unrelated entity for bare Indian tickers
+    if _bare_ticker_likely_indian(ticker):
+        ns_ticker = ticker + ".NS"
+        try:
+            ns_info = yf.Ticker(ns_ticker).info
+        except Exception:
+            ns_info = {}
+        if _ticker_info_valid(ns_info) and ns_info.get("currency") == "INR":
+            return _build(ns_ticker, ns_info)
+
+    try:
+        info = yf.Ticker(ticker).info
+    except Exception:
+        info = {}
+
+    if _ticker_info_valid(info):
+        return _build(ticker, info)
+
+    # Fallback: try .NS for any remaining bare ticker that didn't match above
+    if not ticker.endswith(".NS"):
+        ns_ticker = ticker + ".NS"
+        try:
+            ns_info = yf.Ticker(ns_ticker).info
+        except Exception:
+            ns_info = {}
+        if _ticker_info_valid(ns_info):
+            return _build(ns_ticker, ns_info)
+
+    return {
+        "valid": False,
+        "ticker": ticker,
+        "name": "",
+        "currency": "OTHER",
+        "exchange": None,
+        "country": None,
+        "asset_class": None,
+    }
+
+
 def get_metadata(tickers: list[str]) -> dict[str, dict]:
     """Return metadata for each ticker.
 

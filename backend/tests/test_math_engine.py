@@ -82,8 +82,8 @@ def _mock_get_metadata(tickers):
 
 
 @patch("app.math_engine.get_metadata")
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.performance.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.performance.fetch_prices", side_effect=_mock_fetch_prices)
 def test_performance_metrics_returns_expected_keys(mock_fp, mock_fb, mock_gm):
     from app.math_engine import calculate_performance_metrics
 
@@ -103,8 +103,8 @@ def test_performance_metrics_returns_expected_keys(mock_fp, mock_fb, mock_gm):
 
 
 @patch("app.math_engine.get_metadata")
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.performance.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.performance.fetch_prices", side_effect=_mock_fetch_prices)
 def test_performance_metrics_sharpe_is_reasonable(mock_fp, mock_fb, mock_gm):
     from app.math_engine import calculate_performance_metrics
 
@@ -123,8 +123,8 @@ def test_performance_metrics_sharpe_is_reasonable(mock_fp, mock_fb, mock_gm):
 # ---------------------------------------------------------------------------
 
 
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.risk.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.risk.fetch_prices", side_effect=_mock_fetch_prices)
 def test_risk_metrics_returns_expected_keys(mock_fp, mock_fb):
     from app.math_engine import calculate_risk_metrics
 
@@ -141,8 +141,8 @@ def test_risk_metrics_returns_expected_keys(mock_fp, mock_fb):
         assert isinstance(v, float), f"Expected float for {k}, got {type(v)}"
 
 
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.risk.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.risk.fetch_prices", side_effect=_mock_fetch_prices)
 def test_risk_metrics_max_drawdown_is_negative(mock_fp, mock_fb):
     from app.math_engine import calculate_risk_metrics
 
@@ -153,8 +153,8 @@ def test_risk_metrics_max_drawdown_is_negative(mock_fp, mock_fb):
     )
 
 
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.risk.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.risk.fetch_prices", side_effect=_mock_fetch_prices)
 def test_risk_metrics_var_is_positive(mock_fp, mock_fb):
     from app.math_engine import calculate_risk_metrics
 
@@ -170,8 +170,8 @@ def test_risk_metrics_var_is_positive(mock_fp, mock_fb):
 # ---------------------------------------------------------------------------
 
 
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
-@patch("app.math_engine.get_metadata", side_effect=_mock_get_metadata)
+@patch("app.math_engine.diversification.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.diversification.get_metadata", side_effect=_mock_get_metadata)
 def test_diversification_returns_sectors_and_factors(mock_gm, mock_fp):
     from app.math_engine import get_diversification_and_sector_exposure
 
@@ -199,9 +199,11 @@ def test_diversification_returns_sectors_and_factors(mock_gm, mock_fp):
 
 
 @patch("app.math_engine.get_metadata")
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
-def test_what_if_returns_expected_keys(mock_fp, mock_fb, mock_gm):
+@patch("app.math_engine.risk.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.risk.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.performance.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.performance.fetch_prices", side_effect=_mock_fetch_prices)
+def test_what_if_returns_expected_keys(mock_perf_fp, mock_perf_fb, mock_risk_fp, mock_risk_fb, mock_gm):
     from app.math_engine import run_what_if_simulation
 
     result = run_what_if_simulation(
@@ -230,9 +232,11 @@ def test_what_if_returns_expected_keys(mock_fp, mock_fb, mock_gm):
 
 
 @patch("app.math_engine.get_metadata")
-@patch("app.math_engine.fetch_benchmark", side_effect=_mock_fetch_benchmark)
-@patch("app.math_engine.fetch_prices", side_effect=_mock_fetch_prices)
-def test_what_if_message_mentions_tickers(mock_fp, mock_fb, mock_gm):
+@patch("app.math_engine.risk.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.risk.fetch_prices", side_effect=_mock_fetch_prices)
+@patch("app.math_engine.performance.fetch_benchmark", side_effect=_mock_fetch_benchmark)
+@patch("app.math_engine.performance.fetch_prices", side_effect=_mock_fetch_prices)
+def test_what_if_message_mentions_tickers(mock_perf_fp, mock_perf_fb, mock_risk_fp, mock_risk_fb, mock_gm):
     from app.math_engine import run_what_if_simulation
 
     sell_t = "AAPL"

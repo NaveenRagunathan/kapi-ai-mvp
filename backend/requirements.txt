@@ -2,12 +2,14 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
+slowapi>=0.1.9
+cachetools>=5.3.0
 
 # AI / LangChain
 langchain-core>=0.2.0
 langchain-community>=0.2.0
-langchain-anthropic>=0.1.0
-langchain-google-genai>=1.0.0
+langchain-google-vertexai>=2.0.0
+google-genai>=1.0.0
 
 # Financial Data
 yfinance>=0.2.40
@@ -18,8 +20,5 @@ numpy>=1.26.0
 # Data Validation
 pydantic>=2.7.0
 openpyxl>=3.1.0
-
-# MCP
-mcp>=1.0.0
 
 # Dev dependencies: pip install -r requirements-dev.txt
