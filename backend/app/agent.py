@@ -14,6 +14,8 @@ from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_vertexai import ChatVertexAI
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 
 from app.ingestion import ingest_portfolio
 from app.math_engine import (
@@ -228,7 +230,14 @@ You only discuss portfolio analysis. Respond only in the JSON schema above."""
 
 
 # ---------------------------------------------------------------------------
-# LLM Builder — Gemini 2.5 Flash (primary) + Gemini 2.5 Pro (fallback) via Vertex AI
+# LLM Builder — Gemini 2.5 Flash (primary) -> Gemini 2.5 Pro -> OpenAI -> Claude Haiku
+#
+# Gemini Flash/Pro are the primary tier (Vertex AI). OpenAI and Claude Haiku
+# are further fallbacks for when both Gemini tiers are rate-limited or down
+# (this happened in practice: Vertex AI's per-project generate-content-per-
+# minute quota is low by default and both tiers can 429 in the same window).
+# Each extra provider is only added to the chain if its API key is present,
+# so a missing key degrades the fallback chain instead of crashing startup.
 # ---------------------------------------------------------------------------
 
 def _setup_vertex_credentials():
@@ -261,8 +270,24 @@ def _build_agent():
         location=location,
         temperature=0.1,
     )
-    llm = flash.with_fallbacks([pro])
-    print(f"[agent] Gemini 2.5 Flash (primary) + Pro (fallback) on Vertex AI {location}")
+
+    fallbacks = [pro]
+    chain_desc = ["Gemini 2.5 Flash (primary)", "Gemini 2.5 Pro"]
+
+    if os.environ.get("OPENAI_API_KEY"):
+        fallbacks.append(ChatOpenAI(model="gpt-4o-mini", temperature=0.1))
+        chain_desc.append("OpenAI gpt-4o-mini")
+    else:
+        logger.warning("OPENAI_API_KEY not set — skipping OpenAI fallback tier")
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        fallbacks.append(ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0.1))
+        chain_desc.append("Claude Haiku 4.5")
+    else:
+        logger.warning("ANTHROPIC_API_KEY not set — skipping Claude Haiku fallback tier")
+
+    llm = flash.with_fallbacks(fallbacks)
+    print(f"[agent] LLM fallback chain: {' -> '.join(chain_desc)} (Vertex AI {location})")
     return create_agent(llm, tools=_TOOLS, system_prompt=SYSTEM_PROMPT)
 
 
