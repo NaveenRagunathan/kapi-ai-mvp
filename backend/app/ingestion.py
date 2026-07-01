@@ -25,9 +25,18 @@ _INVESTED_ALIASES = {
 
 
 def _find_column(headers_lower: list[str], aliases: set[str]) -> Optional[int]:
-    """Return the index of the first header that matches any alias, or None."""
+    """Return the index of the first header that matches any alias, or None.
+
+    Tries an exact match first, then falls back to substring matching (e.g.
+    a "Stock Name" header contains the "stock" alias, "Qty (Shares)" contains
+    "qty") so mildly non-standard headers don't immediately require the LLM
+    fallback in _resolve_all_columns.
+    """
     for idx, h in enumerate(headers_lower):
         if h in aliases:
+            return idx
+    for idx, h in enumerate(headers_lower):
+        if any(alias in h for alias in aliases):
             return idx
     return None
 
@@ -66,29 +75,41 @@ def _get_genai_client():
         return None
 
 
+_LLM_HEADER_FIELDS = {
+    "ticker": "the stock/fund's ticker, symbol, or name column (e.g. \"Stock Name\", \"Company\")",
+    "weight": "the holding's percentage allocation/weight in the portfolio",
+    "quantity": "number of shares/units held",
+    "avg_buy_price": "average price paid per share/unit",
+    "invested_amount": "total money invested in that holding",
+}
+
+
 def _llm_map_csv_headers(headers_raw: list[str]) -> dict[str, Optional[int]]:
     """Ask Gemini to map non-standard CSV/Excel headers to canonical fields.
 
-    Used only when direct alias matching (_find_column) can't find
-    avg_buy_price/invested_amount -- the LLM here only maps COLUMN NAMES to
-    field names, it never sees or invents financial values, preserving the
-    golden rule that the LLM never computes/guesses money data.
+    Used only when direct alias matching (_find_column) can't find one or
+    more of ticker/weight/quantity/avg_buy_price/invested_amount -- the LLM
+    here only maps COLUMN NAMES to field names, it never sees or invents
+    financial values, preserving the golden rule that the LLM never
+    computes/guesses money data.
 
-    Returns a dict like {"avg_buy_price": 2, "invested_amount": None} where
-    values are column indices into `headers_raw`, or None if not found.
+    Returns a dict like {"ticker": 0, "weight": None, ...} where values are
+    column indices into `headers_raw`, or None if not found.
     """
+    empty = {field: None for field in _LLM_HEADER_FIELDS}
     client = _get_genai_client()
     if client is None:
-        return {"avg_buy_price": None, "invested_amount": None}
+        return empty
 
+    field_descriptions = "\n".join(f'- "{name}": {desc}' for name, desc in _LLM_HEADER_FIELDS.items())
     prompt = (
         "You are mapping spreadsheet column headers to canonical portfolio fields.\n"
         "Given this list of column headers (0-indexed), return ONLY a JSON object "
         "mapping each of these canonical field names to the matching header's index, "
-        "or null if no header matches: \"avg_buy_price\" (average price paid per "
-        "share/unit), \"invested_amount\" (total money invested in that holding).\n"
+        f"or null if no header matches:\n{field_descriptions}\n"
         f"Headers: {json.dumps(headers_raw)}\n"
-        "Return ONLY the JSON object, e.g. {\"avg_buy_price\": 3, \"invested_amount\": null}"
+        "Return ONLY the JSON object, e.g. {\"ticker\": 0, \"weight\": null, \"quantity\": 1, "
+        "\"avg_buy_price\": 3, \"invested_amount\": null}"
     )
     try:
         result = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
@@ -97,31 +118,45 @@ def _llm_map_csv_headers(headers_raw: list[str]) -> dict[str, Optional[int]]:
             raw = re.sub(r"^```[a-z]*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw).strip()
         mapping = json.loads(raw)
-        return {
-            "avg_buy_price": mapping.get("avg_buy_price"),
-            "invested_amount": mapping.get("invested_amount"),
-        }
+        return {field: mapping.get(field) for field in _LLM_HEADER_FIELDS}
     except Exception as e:
         print(f"[ingestion] Gemini header mapping failed: {e}")
-        return {"avg_buy_price": None, "invested_amount": None}
+        return empty
 
 
 # ── 1.1  File Parsers ─────────────────────────────────────────────────────────
 
-def _resolve_money_columns(headers_lower: list[str], headers_raw: list[str]) -> tuple[Optional[int], Optional[int]]:
-    """Find avg_buy_price/invested_amount columns by alias, falling back to an
-    LLM-assisted header mapping when the headers don't cleanly match (e.g.
-    "Buy Price" phrased unusually). The LLM only maps column NAMES here, it
-    never sees or invents row values."""
+def _resolve_all_columns(headers_lower: list[str], headers_raw: list[str]) -> tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
+    """Find ticker/weight/quantity/avg_buy_price/invested_amount columns by
+    alias (exact then substring), falling back to a single LLM-assisted
+    header-mapping call when any of them still aren't found (e.g. a "Stock
+    Name" or "Company" header instead of "ticker"/"symbol"/"stock"). The LLM
+    only maps column NAMES here, it never sees or invents row values."""
+    ticker_idx = _find_column(headers_lower, _TICKER_ALIASES)
+    weight_idx = _find_column(headers_lower, _WEIGHT_ALIASES)
+    qty_idx = _find_column(headers_lower, _QUANTITY_ALIASES)
     avg_price_idx = _find_column(headers_lower, _AVG_PRICE_ALIASES)
     invested_idx = _find_column(headers_lower, _INVESTED_ALIASES)
 
-    if avg_price_idx is None and invested_idx is None:
+    needs_fallback = (
+        ticker_idx is None
+        or (weight_idx is None and qty_idx is None)
+        or (avg_price_idx is None and invested_idx is None)
+    )
+    if needs_fallback:
         mapped = _llm_map_csv_headers(headers_raw)
-        avg_price_idx = mapped.get("avg_buy_price")
-        invested_idx = mapped.get("invested_amount")
+        if ticker_idx is None:
+            ticker_idx = mapped.get("ticker")
+        if weight_idx is None:
+            weight_idx = mapped.get("weight")
+        if qty_idx is None:
+            qty_idx = mapped.get("quantity")
+        if avg_price_idx is None:
+            avg_price_idx = mapped.get("avg_buy_price")
+        if invested_idx is None:
+            invested_idx = mapped.get("invested_amount")
 
-    return avg_price_idx, invested_idx
+    return ticker_idx, weight_idx, qty_idx, avg_price_idx, invested_idx
 
 
 def parse_csv(file_bytes: bytes) -> list[dict]:
@@ -144,10 +179,7 @@ def parse_csv(file_bytes: bytes) -> list[dict]:
     headers_raw = rows[0]
     headers_lower = [h.strip().lower() for h in headers_raw]
 
-    ticker_idx = _find_column(headers_lower, _TICKER_ALIASES)
-    weight_idx = _find_column(headers_lower, _WEIGHT_ALIASES)
-    qty_idx = _find_column(headers_lower, _QUANTITY_ALIASES)
-    avg_price_idx, invested_idx = _resolve_money_columns(headers_lower, headers_raw)
+    ticker_idx, weight_idx, qty_idx, avg_price_idx, invested_idx = _resolve_all_columns(headers_lower, headers_raw)
 
     if ticker_idx is None:
         raise ValueError(f"No ticker column found. Headers: {headers_raw}")
@@ -186,10 +218,7 @@ def parse_excel(file_bytes: bytes) -> list[dict]:
     headers_raw = [str(h) if h is not None else "" for h in rows[0]]
     headers_lower = [h.strip().lower() for h in headers_raw]
 
-    ticker_idx = _find_column(headers_lower, _TICKER_ALIASES)
-    weight_idx = _find_column(headers_lower, _WEIGHT_ALIASES)
-    qty_idx = _find_column(headers_lower, _QUANTITY_ALIASES)
-    avg_price_idx, invested_idx = _resolve_money_columns(headers_lower, headers_raw)
+    ticker_idx, weight_idx, qty_idx, avg_price_idx, invested_idx = _resolve_all_columns(headers_lower, headers_raw)
 
     if ticker_idx is None:
         raise ValueError(f"No ticker column found. Headers: {headers_raw}")
