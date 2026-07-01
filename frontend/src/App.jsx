@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, lazy, Suspense } from 'react';
 import './App.css';
 import IngestionForm from './components/IngestionForm';
-import { sendChatMessageStream, ingestPortfolioFile, ingestPortfolioText } from './api/service';
+import { sendChatMessageStream, ingestPortfolioFile, ingestPortfolioText, ingestPortfolioImages } from './api/service';
 
 // The analysis-view components are only needed after a portfolio is
 // ingested, so keep them out of the initial bundle.
@@ -37,6 +37,8 @@ export default function App() {
       let data;
       if (type === 'text') {
         data = await ingestPortfolioText(payload);
+      } else if (type === 'images') {
+        data = await ingestPortfolioImages(payload);
       } else {
         data = await ingestPortfolioFile(payload);
       }

@@ -1,28 +1,39 @@
-"""Tests for backend/app/market_data.py — no real network calls."""
+"""Tests for backend/app/market_data.py — no real network calls.
 
-import unittest
-from unittest.mock import MagicMock, patch
+market_data.py talks to Yahoo's crumb-free `v8/finance/chart` endpoint via
+app.market_data._fetch_chart(), so all tests here mock that single seam
+rather than any HTTP library directly.
+"""
+
+from unittest.mock import patch
 
 import pandas as pd
 import numpy as np
-import pytest
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_price_df(tickers, periods=10):
-    """Return a small DataFrame that mimics yf.download(…)["Close"]."""
-    idx = pd.date_range("2023-01-02", periods=periods, freq="B")
-    data = {t: np.linspace(100, 110, periods) for t in tickers}
-    return pd.DataFrame(data, index=idx)
-
-
-def _make_price_series(ticker, periods=10):
-    """Return a small Series that mimics single-ticker yf.download(…)["Close"]."""
-    idx = pd.date_range("2023-01-02", periods=periods, freq="B")
-    return pd.Series(np.linspace(100, 110, periods), index=idx, name=ticker)
+def _make_chart(ticker, periods=10, currency="INR", name="Test Corp",
+                 exchange="NSI", instrument_type="EQUITY", price=100.0):
+    """Build a fake Yahoo chart-endpoint result (what _fetch_chart returns)."""
+    dates = pd.bdate_range("2023-01-02", periods=periods)
+    timestamps = [int(d.timestamp()) for d in dates]
+    closes = list(np.linspace(100, 110, periods))
+    return {
+        "meta": {
+            "currency": currency,
+            "symbol": ticker,
+            "exchangeName": exchange,
+            "instrumentType": instrument_type,
+            "regularMarketPrice": price,
+            "shortName": name,
+            "longName": name,
+        },
+        "timestamp": timestamps,
+        "indicators": {"quote": [{"close": closes}]},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -32,51 +43,35 @@ def _make_price_series(ticker, periods=10):
 class TestFetchPrices:
     """Tests for market_data.fetch_prices."""
 
-    @patch("app.market_data.yf.download")
-    def test_returns_dataframe_with_correct_columns(self, mock_download):
-        """DataFrame columns must match the requested tickers."""
+    @patch("app.market_data._fetch_chart")
+    def test_returns_dataframe_with_correct_columns(self, mock_chart):
         tickers = ["RELIANCE.NS", "INFY.NS"]
-        mock_download.return_value = {"Close": _make_price_df(tickers)}
-
-        # Simulate the yf.download(…)["Close"] subscript that the module uses:
-        # we need __getitem__ to return the DataFrame.
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_df(tickers)
-        mock_download.return_value = mock_result
+        mock_chart.side_effect = lambda t, **kw: _make_chart(t)
 
         from app.market_data import fetch_prices
 
         df = fetch_prices(tickers, period="3y")
 
-        mock_download.assert_called_once_with(tickers, period="3y", auto_adjust=True)
         assert isinstance(df, pd.DataFrame)
         assert list(df.columns) == tickers
 
-    @patch("app.market_data.yf.download")
-    def test_drops_all_nan_rows(self, mock_download):
+    @patch("app.market_data._fetch_chart")
+    def test_drops_all_nan_rows(self, mock_chart):
         """Rows where every value is NaN must be removed."""
-        tickers = ["TCS.NS"]
-        base = _make_price_df(tickers)
-        # Introduce an all-NaN row
-        base.iloc[3] = np.nan
-
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: base
-        mock_download.return_value = mock_result
+        ticker = "TCS.NS"
+        chart = _make_chart(ticker)
+        chart["indicators"]["quote"][0]["close"][3] = None
+        mock_chart.return_value = chart
 
         from app.market_data import fetch_prices
 
-        df = fetch_prices(tickers)
+        df = fetch_prices([ticker])
         assert df.isnull().all(axis=1).sum() == 0
 
-    @patch("app.market_data.yf.download")
-    def test_single_ticker_returns_dataframe(self, mock_download):
-        """Even with one ticker, the return type must be DataFrame."""
+    @patch("app.market_data._fetch_chart")
+    def test_single_ticker_returns_dataframe(self, mock_chart):
         ticker = "WIPRO.NS"
-        # yfinance may return a Series for a single ticker
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_series(ticker)
-        mock_download.return_value = mock_result
+        mock_chart.return_value = _make_chart(ticker)
 
         from app.market_data import fetch_prices
 
@@ -84,18 +79,28 @@ class TestFetchPrices:
         assert isinstance(df, pd.DataFrame)
         assert ticker in df.columns
 
-    @patch("app.market_data.yf.download")
-    def test_datetimeindex(self, mock_download):
-        """The returned DataFrame must have a DatetimeIndex."""
+    @patch("app.market_data._fetch_chart")
+    def test_datetimeindex(self, mock_chart):
         tickers = ["HDFCBANK.NS"]
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_df(tickers)
-        mock_download.return_value = mock_result
+        mock_chart.side_effect = lambda t, **kw: _make_chart(t)
 
         from app.market_data import fetch_prices
 
         df = fetch_prices(tickers)
         assert isinstance(df.index, pd.DatetimeIndex)
+
+    @patch("app.market_data._fetch_chart")
+    def test_unresolvable_ticker_omitted(self, mock_chart):
+        """A ticker that fails to resolve is simply dropped, not an error."""
+        def side_effect(t, **kw):
+            return None if t == "BOGUS" else _make_chart(t)
+        mock_chart.side_effect = side_effect
+
+        from app.market_data import fetch_prices
+
+        df = fetch_prices(["RELIANCE.NS", "BOGUS"])
+        assert "BOGUS" not in df.columns
+        assert "RELIANCE.NS" in df.columns
 
 
 # ---------------------------------------------------------------------------
@@ -105,176 +110,98 @@ class TestFetchPrices:
 class TestFetchBenchmark:
     """Tests for market_data.fetch_benchmark."""
 
-    @patch("app.market_data.yf.download")
-    def test_returns_series(self, mock_download):
-        """fetch_benchmark must return a pd.Series."""
+    @patch("app.market_data._fetch_chart")
+    def test_returns_series(self, mock_chart):
         ticker = "^NSEI"
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_series(ticker)
-        mock_download.return_value = mock_result
+        mock_chart.return_value = _make_chart(ticker)
 
         from app.market_data import fetch_benchmark
 
         s = fetch_benchmark(ticker)
         assert isinstance(s, pd.Series)
 
-    @patch("app.market_data.yf.download")
-    def test_series_name_matches_ticker(self, mock_download):
-        """The Series name must match the ticker argument."""
+    @patch("app.market_data._fetch_chart")
+    def test_series_name_matches_ticker(self, mock_chart):
         ticker = "^NSEI"
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_series(ticker)
-        mock_download.return_value = mock_result
+        mock_chart.return_value = _make_chart(ticker)
 
         from app.market_data import fetch_benchmark
 
         s = fetch_benchmark(ticker)
         assert s.name == ticker
 
-    @patch("app.market_data.yf.download")
-    def test_default_ticker_is_nsei(self, mock_download):
-        """Default benchmark ticker must be ^NSEI."""
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: _make_price_series("^NSEI")
-        mock_download.return_value = mock_result
+    @patch("app.market_data._fetch_chart")
+    def test_default_ticker_is_nsei(self, mock_chart):
+        mock_chart.return_value = _make_chart("^NSEI")
 
         from app.market_data import fetch_benchmark
 
         fetch_benchmark()
-        args, kwargs = mock_download.call_args
+        args, kwargs = mock_chart.call_args
         assert args[0] == "^NSEI"
 
-    @patch("app.market_data.yf.download")
-    def test_drops_nan_values(self, mock_download):
-        """NaN values in the benchmark series must be dropped."""
+    @patch("app.market_data._fetch_chart")
+    def test_drops_nan_values(self, mock_chart):
         ticker = "^NSEI"
-        s = _make_price_series(ticker)
-        s.iloc[2] = np.nan
-
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: s
-        mock_download.return_value = mock_result
+        chart = _make_chart(ticker)
+        chart["indicators"]["quote"][0]["close"][2] = None
+        mock_chart.return_value = chart
 
         from app.market_data import fetch_benchmark
 
         result = fetch_benchmark(ticker)
         assert result.isnull().sum() == 0
 
-    @patch("app.market_data.yf.download")
-    def test_dataframe_input_normalised_to_series(self, mock_download):
-        """If yfinance returns a DataFrame, fetch_benchmark converts it to Series."""
-        ticker = "^NSEI"
-        df = _make_price_df([ticker])
-
-        mock_result = MagicMock()
-        mock_result.__getitem__ = lambda self, key: df
-        mock_download.return_value = mock_result
+    @patch("app.market_data._fetch_chart")
+    def test_unresolvable_ticker_returns_empty_series(self, mock_chart):
+        mock_chart.return_value = None
 
         from app.market_data import fetch_benchmark
 
-        result = fetch_benchmark(ticker)
+        result = fetch_benchmark("BOGUS")
         assert isinstance(result, pd.Series)
+        assert result.empty
 
 
 # ---------------------------------------------------------------------------
 # get_metadata
 # ---------------------------------------------------------------------------
 
-def _make_mock_ticker(info: dict):
-    """Create a mock yf.Ticker instance with the given .info dict."""
-    mock_ticker = MagicMock()
-    mock_ticker.info = info
-    return mock_ticker
-
-
 class TestGetMetadata:
-    """Tests for market_data.get_metadata."""
+    """Tests for market_data.get_metadata — sector/industry are always
+    "Unknown" since that data isn't available crumb-free; asset_class comes
+    from resolve_ticker_metadata."""
 
-    @patch("app.market_data.yf.Ticker")
-    def test_equity_structure(self, mock_ticker_cls):
-        """Equity ticker: asset_class == 'Equity', all keys present."""
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "quoteType": "EQUITY",
-            "sector": "Technology",
-            "industry": "Software",
-            "marketCap": 5_000_000_000,
-        })
+    @patch("app.market_data.resolve_ticker_metadata")
+    def test_reports_unknown_sector_and_industry(self, mock_resolve):
+        mock_resolve.return_value = {"asset_class": "Equity", "valid": True}
 
         from app.market_data import get_metadata
-
         result = get_metadata(["INFY.NS"])
-        assert "INFY.NS" in result
+
         entry = result["INFY.NS"]
-        assert entry["sector"] == "Technology"
-        assert entry["industry"] == "Software"
-        assert entry["market_cap"] == 5_000_000_000
-        assert entry["asset_class"] == "Equity"
-
-    @patch("app.market_data.yf.Ticker")
-    def test_etf_asset_class(self, mock_ticker_cls):
-        """ETF quoteType maps to asset_class == 'ETF'."""
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "quoteType": "ETF",
-            "sector": "Unknown",
-            "industry": "Unknown",
-            "marketCap": 1_000_000,
-        })
-
-        from app.market_data import get_metadata
-
-        result = get_metadata(["NIFTYBEES.NS"])
-        assert result["NIFTYBEES.NS"]["asset_class"] == "ETF"
-
-    @patch("app.market_data.yf.Ticker")
-    def test_crypto_asset_class(self, mock_ticker_cls):
-        """CRYPTOCURRENCY quoteType maps to asset_class == 'Crypto'."""
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "quoteType": "CRYPTOCURRENCY",
-            "sector": "Unknown",
-            "industry": "Unknown",
-            "marketCap": 800_000_000_000,
-        })
-
-        from app.market_data import get_metadata
-
-        result = get_metadata(["BTC-USD"])
-        assert result["BTC-USD"]["asset_class"] == "Crypto"
-
-    @patch("app.market_data.yf.Ticker")
-    def test_missing_keys_default_to_unknown(self, mock_ticker_cls):
-        """Missing info keys must fall back to 'Unknown' (sector/industry)."""
-        mock_ticker_cls.return_value = _make_mock_ticker({})
-
-        from app.market_data import get_metadata
-
-        result = get_metadata(["XYZ.NS"])
-        entry = result["XYZ.NS"]
         assert entry["sector"] == "Unknown"
         assert entry["industry"] == "Unknown"
-        assert entry["asset_class"] == "Equity"  # default when quoteType missing
         assert entry["market_cap"] == 0
+        assert entry["asset_class"] == "Equity"
 
-    @patch("app.market_data.yf.Ticker")
-    def test_multiple_tickers(self, mock_ticker_cls):
-        """Multiple tickers each get their own metadata dict."""
-        tickers = ["A.NS", "B.NS", "C.NS"]
-
-        def side_effect(t):
-            return _make_mock_ticker({
-                "quoteType": "EQUITY",
-                "sector": f"Sector_{t}",
-                "industry": f"Industry_{t}",
-                "marketCap": 1_000,
-            })
-
-        mock_ticker_cls.side_effect = side_effect
+    @patch("app.market_data.resolve_ticker_metadata")
+    def test_asset_class_reflects_resolved_ticker(self, mock_resolve):
+        mock_resolve.return_value = {"asset_class": "ETF", "valid": True}
 
         from app.market_data import get_metadata
+        result = get_metadata(["NIFTYBEES.NS"])
 
-        result = get_metadata(tickers)
-        assert set(result.keys()) == set(tickers)
-        for t in tickers:
-            assert result[t]["sector"] == f"Sector_{t}"
+        assert result["NIFTYBEES.NS"]["asset_class"] == "ETF"
+
+    @patch("app.market_data.resolve_ticker_metadata")
+    def test_multiple_tickers_each_get_own_entry(self, mock_resolve):
+        mock_resolve.side_effect = lambda t: {"asset_class": "Equity", "valid": True}
+
+        from app.market_data import get_metadata
+        result = get_metadata(["A.NS", "B.NS"])
+
+        assert set(result.keys()) == {"A.NS", "B.NS"}
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +211,11 @@ class TestGetMetadata:
 class TestResolveTickerMetadata:
     """Tests for market_data.resolve_ticker_metadata — real India/US differentiation."""
 
-    @patch("app.market_data.yf.Ticker")
-    def test_us_ticker_currency_and_exchange(self, mock_ticker_cls):
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "currency": "USD", "exchange": "NMS", "quoteType": "EQUITY",
-            "shortName": "Apple Inc", "regularMarketPrice": 180.0,
-            "country": "United States",
-        })
+    @patch("app.market_data._fetch_chart")
+    def test_us_ticker_currency_and_exchange(self, mock_chart):
+        mock_chart.return_value = _make_chart(
+            "AAPL", currency="USD", name="Apple Inc", exchange="NMS",
+        )
 
         from app.market_data import resolve_ticker_metadata
 
@@ -301,13 +226,11 @@ class TestResolveTickerMetadata:
         assert result["exchange"] == "NMS"
         assert result["asset_class"] == "Equity"
 
-    @patch("app.market_data.yf.Ticker")
-    def test_indian_ticker_currency_and_exchange(self, mock_ticker_cls):
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "currency": "INR", "exchange": "NSI", "quoteType": "EQUITY",
-            "shortName": "Reliance Industries", "regularMarketPrice": 2450.0,
-            "country": "India",
-        })
+    @patch("app.market_data._fetch_chart")
+    def test_indian_ticker_currency_and_exchange(self, mock_chart):
+        mock_chart.return_value = _make_chart(
+            "RELIANCE.NS", currency="INR", name="Reliance Industries", exchange="NSI",
+        )
 
         from app.market_data import resolve_ticker_metadata
 
@@ -315,21 +238,18 @@ class TestResolveTickerMetadata:
         assert result["currency"] == "INR"
         assert result["exchange"] == "NSI"
 
-    @patch("app.market_data.yf.Ticker")
-    def test_bare_indian_ticker_ns_fallback_reads_real_currency(self, mock_ticker_cls):
+    @patch("app.market_data._fetch_chart")
+    def test_bare_indian_ticker_ns_fallback_reads_real_currency(self, mock_chart):
         """Bare 'RELIANCE' should retry with .NS, then read currency from that
         result rather than assuming INR from the suffix."""
-        def side_effect(t):
+        def side_effect(t, **kw):
             if t == "RELIANCE":
-                return _make_mock_ticker({})
+                return None
             if t == "RELIANCE.NS":
-                return _make_mock_ticker({
-                    "currency": "INR", "exchange": "NSI", "quoteType": "EQUITY",
-                    "shortName": "Reliance Industries", "regularMarketPrice": 2450.0,
-                })
-            return _make_mock_ticker({})
+                return _make_chart("RELIANCE.NS", currency="INR", name="Reliance Industries", exchange="NSI")
+            return None
 
-        mock_ticker_cls.side_effect = side_effect
+        mock_chart.side_effect = side_effect
 
         from app.market_data import resolve_ticker_metadata
 
@@ -338,9 +258,9 @@ class TestResolveTickerMetadata:
         assert result["ticker"] == "RELIANCE.NS"
         assert result["currency"] == "INR"
 
-    @patch("app.market_data.yf.Ticker")
-    def test_invalid_ticker(self, mock_ticker_cls):
-        mock_ticker_cls.return_value = _make_mock_ticker({})
+    @patch("app.market_data._fetch_chart")
+    def test_invalid_ticker(self, mock_chart):
+        mock_chart.return_value = None
 
         from app.market_data import resolve_ticker_metadata
 
@@ -348,15 +268,26 @@ class TestResolveTickerMetadata:
         assert result["valid"] is False
         assert result["currency"] == "OTHER"
 
-    @patch("app.market_data.yf.Ticker")
-    def test_unmapped_currency_falls_back_to_other(self, mock_ticker_cls):
-        mock_ticker_cls.return_value = _make_mock_ticker({
-            "currency": "EUR", "exchange": "PAR", "quoteType": "EQUITY",
-            "shortName": "Some EU Co", "regularMarketPrice": 50.0,
-        })
+    @patch("app.market_data._fetch_chart")
+    def test_unmapped_currency_falls_back_to_other(self, mock_chart):
+        mock_chart.return_value = _make_chart(
+            "MC.PA", currency="EUR", name="Some EU Co", exchange="PAR",
+        )
 
         from app.market_data import resolve_ticker_metadata
 
         result = resolve_ticker_metadata("MC.PA")
         assert result["valid"] is True
         assert result["currency"] == "OTHER"
+
+    @patch("app.market_data._fetch_chart")
+    def test_etf_instrument_type_maps_to_etf(self, mock_chart):
+        mock_chart.return_value = _make_chart(
+            "NIFTYBEES.NS", currency="INR", name="Nifty BeES", exchange="NSI",
+            instrument_type="ETF",
+        )
+
+        from app.market_data import resolve_ticker_metadata
+
+        result = resolve_ticker_metadata("NIFTYBEES.NS")
+        assert result["asset_class"] == "ETF"

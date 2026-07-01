@@ -301,6 +301,22 @@ def _mock_ticker(info: dict):
     return m
 
 
+def _mock_chart(*, currency="USD", name="Test Corp", exchange="NMS", instrument_type="EQUITY"):
+    """Build a fake Yahoo chart-endpoint result matching what
+    app.market_data._fetch_chart returns, for mocking ticker resolution."""
+    return {
+        "meta": {
+            "currency": currency,
+            "shortName": name,
+            "exchangeName": exchange,
+            "instrumentType": instrument_type,
+            "regularMarketPrice": 100,
+        },
+        "timestamp": [],
+        "indicators": {"quote": [{"close": []}]},
+    }
+
+
 @pytest.mark.skip(reason="deprecated")
 class TestValidateTickers:
     def test_valid_us_ticker(self):
@@ -433,10 +449,8 @@ class TestIngestPortfolio:
             ["Ticker", "Quantity", "Avg Price"],
         )
 
-        with patch("app.ingestion.yf.Ticker") as mock_yf:
-            mock_yf.side_effect = lambda sym: _mock_ticker(
-                {"shortName": sym + " Inc.", "regularMarketPrice": 100}
-            )
+        with patch("app.market_data._fetch_chart") as mock_chart:
+            mock_chart.side_effect = lambda sym, **kw: _mock_chart(name=sym + " Inc.")
             result = ingest_portfolio(file_bytes=data, file_type="csv")
 
         assert len(result.holdings) == 2
@@ -444,10 +458,8 @@ class TestIngestPortfolio:
     def test_text_end_to_end(self):
         from app.ingestion import ingest_portfolio
 
-        with patch("app.ingestion.yf.Ticker") as mock_yf:
-            mock_yf.side_effect = lambda sym: _mock_ticker(
-                {"shortName": sym + " Corp", "regularMarketPrice": 100}
-            )
+        with patch("app.market_data._fetch_chart") as mock_chart:
+            mock_chart.side_effect = lambda sym, **kw: _mock_chart(name=sym + " Corp")
             result = ingest_portfolio(text="AAPL: 10 qty @ 150.00\nMSFT: 5 qty @ 300.00")
 
         assert len(result.holdings) == 2
@@ -459,10 +471,8 @@ class TestIngestPortfolio:
             ["Ticker", "Quantity", "Avg Price"],
         )
 
-        with patch("app.ingestion.yf.Ticker") as mock_yf:
-            mock_yf.side_effect = lambda sym: _mock_ticker(
-                {"shortName": sym + " Inc.", "regularMarketPrice": 100}
-            )
+        with patch("app.market_data._fetch_chart") as mock_chart:
+            mock_chart.side_effect = lambda sym, **kw: _mock_chart(name=sym + " Inc.")
             result = ingest_portfolio(file_bytes=data, file_type="xlsx")
 
         assert len(result.holdings) == 2

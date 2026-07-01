@@ -86,3 +86,17 @@ def ingest_file_blocking(session_id: str, file_bytes: bytes, file_type: str) -> 
         error_msg = "; ".join([e.message for e in result.errors]) or "No valid holdings found."
         raise HTTPException(status_code=400, detail=error_msg)
     return finalize_ingestion(session_id, result)
+
+
+def ingest_images_blocking(session_id: str, images: list[tuple[bytes, str]]) -> dict:
+    """Same as ingest_text_blocking, for the screenshot ingestion path.
+    Vision calls are slower than text/CSV parsing, so this especially
+    benefits from running off the event loop."""
+    result = ingest_portfolio(images=images)
+    if not result.holdings:
+        error_msg = "; ".join([e.message for e in result.errors]) or (
+            "Could not read any holdings from the screenshot(s). "
+            "Make sure the holdings table/list is clearly visible."
+        )
+        raise HTTPException(status_code=400, detail=error_msg)
+    return finalize_ingestion(session_id, result)

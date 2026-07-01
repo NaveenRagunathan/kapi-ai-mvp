@@ -24,6 +24,10 @@ export default function FormatGuide() {
           <span className="format-capsule-dot" style={{ background: '#3b82f6' }} />
           CSV / Excel format
         </button>
+        <button className="format-capsule" onClick={() => setActiveModal('screenshot')}>
+          <span className="format-capsule-dot" style={{ background: '#8b5cf6' }} />
+          Paste a screenshot
+        </button>
         <button className="format-capsule" onClick={() => setActiveModal('tips')}>
           <span className="format-capsule-dot" style={{ background: '#d97706' }} />
           Tips &amp; what to expect

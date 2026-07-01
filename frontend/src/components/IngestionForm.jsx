@@ -7,7 +7,10 @@ export default function IngestionForm({ onIngestStart, externalError }) {
     text, setText,
     dragOver, setDragOver,
     fileRef,
-    handleFile, handleDrop, handleTextSubmit,
+    images, addImages, removeImage,
+    handleFile, handleDrop,
+    handleTextAreaPaste, handleTextAreaDrop,
+    handleSubmit,
   } = useIngestion(onIngestStart);
 
   const error = externalError;
@@ -57,20 +60,44 @@ export default function IngestionForm({ onIngestStart, externalError }) {
 
         {mode === 'text' ? (
           <div className="text-area-container">
+            {images.length > 0 && (
+              <div className="image-thumbnail-strip">
+                {images.map((img, i) => (
+                  <div className="image-thumbnail" key={img.previewUrl}>
+                    <img src={img.previewUrl} alt={`Screenshot ${i + 1}`} />
+                    <button
+                      type="button"
+                      className="image-thumbnail-remove"
+                      onClick={() => removeImage(i)}
+                      aria-label={`Remove screenshot ${i + 1}`}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               className="text-area"
-              placeholder={`Describe your portfolio naturally — AI reads any format:\n\nRELIANCE.NS: 10 shares @ 2450.50\nTCS.NS: 5 shares @ 3210.00\nGOLDBEES.NS: 200 qty @ 45.20\nAAPL: 25 shares @ 175.20`}
+              placeholder={
+                images.length > 0
+                  ? 'Screenshots added — click Analyze, or paste/drop more (up to 5).'
+                  : `Describe your portfolio naturally, or paste/drop a screenshot — AI reads any format:\n\nRELIANCE.NS: 10 shares @ 2450.50\nTCS.NS: 5 shares @ 3210.00\nGOLDBEES.NS: 200 qty @ 45.20\nAAPL: 25 shares @ 175.20`
+              }
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onPaste={handleTextAreaPaste}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleTextAreaDrop}
               rows={5}
             />
             <button
               className="btn-primary submit-btn"
-              onClick={handleTextSubmit}
-              disabled={!text.trim()}
+              onClick={handleSubmit}
+              disabled={!text.trim() && images.length === 0}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-              Analyze Portfolio
+              {images.length > 0 ? `Analyze ${images.length} Screenshot${images.length > 1 ? 's' : ''}` : 'Analyze Portfolio'}
             </button>
           </div>
         ) : (

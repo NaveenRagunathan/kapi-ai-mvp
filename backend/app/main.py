@@ -19,12 +19,12 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
-from typing import Optional
+from typing import List, Optional
 
 from app.agent import chat, get_or_create_session, clear_session
 from app.guardrails import check_injection
 from app.math_engine import get_correlation_matrix
-from app.portfolio_service import ingest_text_blocking, ingest_file_blocking
+from app.portfolio_service import ingest_text_blocking, ingest_file_blocking, ingest_images_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,10 @@ _ALLOWED_MIME_TYPES = {
 }
 _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
+_ALLOWED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB per image
+_MAX_IMAGES = 5
+
 # ---------------------------------------------------------------------------
 # SSE token sanitizer
 # ---------------------------------------------------------------------------
@@ -120,6 +124,32 @@ async def ingest_from_file(request: Request, file: UploadFile = File(...), sessi
     session_id = session_id or str(uuid.uuid4())
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, ingest_file_blocking, session_id, contents, file_type)
+
+
+@app.post("/api/portfolio/ingest/images")
+@limiter.limit("5/minute")
+async def ingest_from_images(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = Form(None),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="No screenshots provided.")
+    if len(files) > _MAX_IMAGES:
+        raise HTTPException(status_code=413, detail=f"Too many screenshots (max {_MAX_IMAGES}).")
+
+    images: list[tuple[bytes, str]] = []
+    for f in files:
+        if f.content_type not in _ALLOWED_IMAGE_MIME_TYPES:
+            raise HTTPException(status_code=415, detail=f"Unsupported image type: {f.content_type}. Use PNG, JPEG, or WebP.")
+        contents = await f.read()
+        if len(contents) > _MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=413, detail="One or more screenshots exceed the 8 MB size limit.")
+        images.append((contents, f.content_type))
+
+    session_id = session_id or str(uuid.uuid4())
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, ingest_images_blocking, session_id, images)
 
 
 class ChatRequest(BaseModel):

@@ -44,6 +44,30 @@ export const MODAL_CONTENT = {
       </>
     ),
   },
+  screenshot: {
+    title: '📸 Screenshot Format',
+    content: (
+      <>
+        <div>
+          <p className="fguide-desc">Paste (Ctrl/Cmd+V) or drag a screenshot of your broker app's holdings screen straight into the text box — no typing needed.</p>
+          <div className="format-modal-tips" style={{ marginTop: '10px' }}>
+            <div className="fguide-tip">
+              <span className="fguide-tip-dot fguide-tip-dot--green" />
+              <span>Crop to the holdings table so ticker, quantity, and price are clearly visible.</span>
+            </div>
+            <div className="fguide-tip">
+              <span className="fguide-tip-dot fguide-tip-dot--blue" />
+              <span>Up to 5 screenshots per submission — useful for multiple accounts or a scrolling list.</span>
+            </div>
+            <div className="fguide-tip">
+              <span className="fguide-tip-dot fguide-tip-dot--amber" />
+              <span>We only extract numbers that are actually legible — nothing is guessed or estimated.</span>
+            </div>
+          </div>
+        </div>
+      </>
+    ),
+  },
   tips: {
     title: '💡 Tips & What to Expect',
     content: (

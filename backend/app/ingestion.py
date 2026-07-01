@@ -9,7 +9,6 @@ import re
 from typing import Optional
 
 import openpyxl
-import yfinance as yf
 
 # ── Column-name aliases ───────────────────────────────────────────────────────
 
@@ -253,6 +252,37 @@ Examples:
 Now parse this input and return ONLY the JSON array:"""
 
 
+def _extract_json_array(raw: str) -> list:
+    """Strip markdown code fences (if present) and parse a JSON array."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-z]*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw).strip()
+    return json.loads(raw)
+
+
+def _holdings_from_llm_json(parsed: list) -> list[dict]:
+    """Normalize a parsed LLM JSON array (from either the text or image
+    extraction prompts) into the shared raw-holding dict shape."""
+    results = []
+    for item in parsed:
+        ticker = str(item.get("ticker", "")).upper().strip()
+        if not ticker:
+            continue
+        raw_weight = item.get("raw_weight")
+        quantity = item.get("quantity")
+        avg_buy_price = item.get("avg_buy_price")
+        invested_amount = item.get("invested_amount")
+        results.append({
+            "ticker": ticker,
+            "raw_weight": float(raw_weight) if raw_weight is not None else None,
+            "quantity": float(quantity) if quantity is not None else None,
+            "avg_buy_price": float(avg_buy_price) if avg_buy_price is not None else None,
+            "invested_amount": float(invested_amount) if invested_amount is not None else None,
+        })
+    return results
+
+
 def _parse_text_with_gemini(text: str) -> list[dict]:
     """Call Gemini Flash (Vertex AI) to parse free-form portfolio text into structured holdings."""
     client = _get_genai_client()
@@ -263,30 +293,8 @@ def _parse_text_with_gemini(text: str) -> list[dict]:
             model="gemini-2.5-flash",
             contents=f"{_HAIKU_PARSE_PROMPT}\n{text}",
         )
-        raw = result.text.strip()
-
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = re.sub(r"^```[a-z]*\n?", "", raw)
-            raw = re.sub(r"\n?```$", "", raw).strip()
-        parsed = json.loads(raw)
-        results = []
-        for item in parsed:
-            ticker = str(item.get("ticker", "")).upper().strip()
-            if not ticker:
-                continue
-            raw_weight = item.get("raw_weight")
-            quantity = item.get("quantity")
-            avg_buy_price = item.get("avg_buy_price")
-            invested_amount = item.get("invested_amount")
-            results.append({
-                "ticker": ticker,
-                "raw_weight": float(raw_weight) if raw_weight is not None else None,
-                "quantity": float(quantity) if quantity is not None else None,
-                "avg_buy_price": float(avg_buy_price) if avg_buy_price is not None else None,
-                "invested_amount": float(invested_amount) if invested_amount is not None else None,
-            })
-        return results
+        parsed = _extract_json_array(result.text)
+        return _holdings_from_llm_json(parsed)
     except Exception as e:
         print(f"[ingestion] Gemini parse failed: {e}")
         return []
@@ -353,6 +361,79 @@ def parse_text_input(text: str) -> list[dict]:
     if result:
         return result
     return _parse_text_regex(text)
+
+
+# ── 1.2b  Screenshot-to-Portfolio (Gemini Vision) ─────────────────────────────
+
+_IMAGE_PARSE_PROMPT = """You are a portfolio parser. These images are screenshots of a stock
+broker/investing app showing a user's holdings (e.g. a portfolio/holdings tab, a positions
+list, or an account summary). Extract every distinct holding visible across ALL images and
+return ONLY a valid JSON array (no markdown, no explanation). Each element:
+- {"ticker": "SYMBOL", "quantity": <number>}   — share/unit count
+- {"ticker": "SYMBOL", "raw_weight": <number>} — percentage or decimal weight, only if quantity
+  isn't shown but an allocation % is
+- {"ticker": "SYMBOL", "quantity": <number>, "avg_buy_price": <number>} — use when a per-share
+  average/buy price is visible alongside quantity
+- {"ticker": "SYMBOL", "quantity": <number>, "invested_amount": <number>} — use when a total
+  invested value is visible instead of a per-share price
+
+CRITICAL RULES:
+1. Only extract values that are actually visible in the image. NEVER estimate, guess, compute,
+   or hallucinate a number that isn't legible in the screenshot.
+2. Tickers are stock/ETF symbols or company names shown in the holdings list — ignore UI chrome
+   (tab labels, "Total", "P&L", buttons, navigation text).
+3. Uppercase all tickers. Convert a written-out company name to its ticker if obvious
+   (e.g. "Reliance Industries" -> "RELIANCE"). Do NOT add a .NS suffix.
+4. If the same ticker appears in more than one image (e.g. duplicate screenshot), include it only once.
+5. If a number is cut off, blurry, or ambiguous, omit that field for that holding rather than guessing.
+6. If no holdings are legible in the images at all, return an empty JSON array: []
+
+Return ONLY the JSON array."""
+
+
+def _parse_images_with_gemini(images: list[tuple[bytes, str]]) -> list[dict]:
+    """Call Gemini (Vertex AI) vision to extract holdings from one or more
+    portfolio screenshots in a single multimodal request.
+
+    images: list of (raw_bytes, mime_type) tuples, e.g. (b"...", "image/png").
+    """
+    client = _get_genai_client()
+    if client is None:
+        return []
+    try:
+        from google.genai import types
+
+        parts = [
+            types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+            for img_bytes, mime_type in images
+        ]
+        contents = parts + [_IMAGE_PARSE_PROMPT]
+        result = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+        )
+        parsed = _extract_json_array(result.text)
+        return _holdings_from_llm_json(parsed)
+    except Exception as e:
+        print(f"[ingestion] Gemini image parse failed: {e}")
+        return []
+
+
+def parse_image_input(images: list[tuple[bytes, str]]) -> list[dict]:
+    """Parse one or more portfolio screenshots into structured holdings.
+
+    images: list of (raw_bytes, mime_type) tuples.
+
+    Unlike text/CSV parsing there is no regex fallback -- if Gemini is
+    unavailable or extracts nothing, this returns an empty list and the
+    caller surfaces a normal "no valid holdings found" error.
+
+    Returns list of {"ticker": str, "raw_weight": float|None, "quantity": float|None,
+    "avg_buy_price": float|None, "invested_amount": float|None}.
+    """
+    if not images:
+        return []
+    return _parse_images_with_gemini(images)
 
 
 # ── 1.3  Shared validation gate ───────────────────────────────────────────────
@@ -494,6 +575,7 @@ def ingest_portfolio(
     file_bytes: bytes = None,
     file_type: str = None,
     text: str = None,
+    images: list[tuple[bytes, str]] = None,
 ) -> IngestionResult:
     """Main entry point for portfolio ingestion.
 
@@ -501,6 +583,7 @@ def ingest_portfolio(
         file_bytes: Raw file content (CSV or XLSX).
         file_type:  "csv" or "xlsx" (case-insensitive).
         text:       Free-text portfolio description.
+        images:     List of (raw_bytes, mime_type) portfolio screenshots.
 
     Returns:
         IngestionResult(holdings=[Holding, ...], errors=[HoldingValidationError, ...]).
@@ -513,9 +596,11 @@ def ingest_portfolio(
             raw = parse_excel(file_bytes)
         else:
             raise ValueError(f"Unsupported file type: {file_type!r}")
+    elif images:
+        raw = parse_image_input(images)
     elif text is not None:
         raw = parse_text_input(text)
     else:
-        raise ValueError("Provide either (file_bytes + file_type) or text.")
+        raise ValueError("Provide either (file_bytes + file_type), images, or text.")
 
     return validate_holdings(raw)

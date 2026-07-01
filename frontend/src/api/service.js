@@ -45,6 +45,23 @@ export async function ingestPortfolioFile(file, sessionId = null) {
   return res.json();
 }
 
+export async function ingestPortfolioImages(files, sessionId = null) {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  if (sessionId) form.append('session_id', sessionId);
+  const res = await fetch(`${BASE}/api/portfolio/ingest/images`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let detail = text;
+    try { detail = JSON.parse(text).detail || text; } catch {}
+    throw new ApiError(res.status, detail || 'Screenshot upload failed');
+  }
+  return res.json();
+}
+
 export async function sendChatMessage(sessionId, message) {
   return request('/api/chat', {
     method: 'POST',
