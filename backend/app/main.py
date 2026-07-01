@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -49,10 +50,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Restrict CORS — explicit methods and headers only
+# Restrict CORS — explicit methods and headers only. Extra origins (e.g. the
+# deployed frontend) can be added via the ALLOWED_ORIGINS env var (comma-separated).
+_default_origins = ["http://localhost:5173", "http://localhost:3000"]
+_extra_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_default_origins + _extra_origins,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "Accept"],
     allow_credentials=False,
