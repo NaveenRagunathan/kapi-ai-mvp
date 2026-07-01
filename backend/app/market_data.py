@@ -1,8 +1,12 @@
 """Fetches and caches market data from external providers (yfinance, etc.)."""
 
+import logging
+
 import requests_cache
 import yfinance as yf
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # Install HTTP cache at module load time (24-hour TTL, SQLite backend)
 requests_cache.install_cache(
@@ -130,6 +134,7 @@ def resolve_ticker_metadata(ticker: str) -> dict:
         try:
             ns_info = yf.Ticker(ns_ticker).info
         except Exception:
+            logger.warning("yfinance lookup failed for %s", ns_ticker, exc_info=True)
             ns_info = {}
         if _ticker_info_valid(ns_info) and ns_info.get("currency") == "INR":
             return _build(ns_ticker, ns_info)
@@ -137,6 +142,7 @@ def resolve_ticker_metadata(ticker: str) -> dict:
     try:
         info = yf.Ticker(ticker).info
     except Exception:
+        logger.warning("yfinance lookup failed for %s", ticker, exc_info=True)
         info = {}
 
     if _ticker_info_valid(info):
@@ -148,6 +154,7 @@ def resolve_ticker_metadata(ticker: str) -> dict:
         try:
             ns_info = yf.Ticker(ns_ticker).info
         except Exception:
+            logger.warning("yfinance lookup failed for %s", ns_ticker, exc_info=True)
             ns_info = {}
         if _ticker_info_valid(ns_info):
             return _build(ns_ticker, ns_info)
