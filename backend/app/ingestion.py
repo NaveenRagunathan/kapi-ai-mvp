@@ -446,7 +446,7 @@ def parse_image_input(images: list[tuple[bytes, str]]) -> list[dict]:
 
 from pydantic import ValidationError as _PydanticValidationError
 
-from app.market_data import resolve_ticker_metadata
+from app.market_data import _parallel_map, resolve_ticker_metadata
 from app.models import Holding, HoldingInput, HoldingValidationError, IngestionResult
 
 
@@ -501,9 +501,10 @@ def validate_holdings(raw: list[dict]) -> IngestionResult:
     if not candidates:
         return IngestionResult(holdings=[], errors=errors)
 
+    metas = _parallel_map(lambda hi: resolve_ticker_metadata(hi.ticker), candidates)
+
     resolved: list[tuple[HoldingInput, dict]] = []
-    for hi in candidates:
-        meta = resolve_ticker_metadata(hi.ticker)
+    for hi, meta in zip(candidates, metas):
         if not meta["valid"]:
             errors.append(HoldingValidationError(
                 row=hi.source_row, ticker=hi.ticker, field="ticker",

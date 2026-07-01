@@ -15,12 +15,24 @@ diversification-chart richness, it never blocks ingestion or price-based math.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import requests
 import requests_cache
 
 logger = logging.getLogger(__name__)
+
+_MAX_WORKERS = 10
+
+
+def _parallel_map(func, items: list):
+    """Run func(item) for each item concurrently (I/O-bound network calls,
+    independent of each other) and return results in the original order."""
+    if len(items) <= 1:
+        return [func(item) for item in items]
+    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(items))) as pool:
+        return list(pool.map(func, items))
 
 # Install HTTP cache at module load time (24-hour TTL, SQLite backend)
 requests_cache.install_cache(
@@ -71,9 +83,10 @@ def fetch_prices(tickers: list[str], period: str = "3y") -> pd.DataFrame:
     Returns a DataFrame with a DatetimeIndex and columns equal to the
     requested tickers (tickers that fail to resolve are simply omitted).
     """
+    charts = _parallel_map(lambda t: _fetch_chart(t, range_=period), tickers)
+
     columns = {}
-    for t in tickers:
-        chart = _fetch_chart(t, range_=period)
+    for t, chart in zip(tickers, charts):
         if chart is None:
             continue
         series = _chart_to_series(chart)
@@ -202,10 +215,10 @@ def get_metadata(tickers: list[str]) -> dict[str, dict]:
             ...
         }
     """
-    result: dict[str, dict] = {}
+    metas = _parallel_map(resolve_ticker_metadata, tickers)
 
-    for t in tickers:
-        meta = resolve_ticker_metadata(t)
+    result: dict[str, dict] = {}
+    for t, meta in zip(tickers, metas):
         result[t] = {
             "sector": "Unknown",
             "industry": "Unknown",
