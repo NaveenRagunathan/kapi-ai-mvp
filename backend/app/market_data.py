@@ -15,6 +15,7 @@ diversification-chart richness, it never blocks ingestion or price-based math.
 """
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
@@ -22,6 +23,8 @@ import requests
 import requests_cache
 
 logger = logging.getLogger(__name__)
+
+_FMP_BASE_URL = "https://financialmodelingprep.com/stable"
 
 _MAX_WORKERS = 10
 
@@ -195,13 +198,68 @@ def resolve_ticker_metadata(ticker: str) -> dict:
     }
 
 
-def get_metadata(tickers: list[str]) -> dict[str, dict]:
-    """Return sector/industry/market-cap metadata for each ticker.
+def _fetch_fmp_profile(ticker: str) -> dict | None:
+    """Fetch sector/industry/market-cap/P-E from Financial Modeling Prep's
+    /stable/profile endpoint. Yahoo's crumb-free chart endpoint (used
+    elsewhere in this module) doesn't expose this data -- the Yahoo endpoint
+    that does (quoteSummary) is exactly the one that gets rate-limited/
+    blocked on cloud IPs, which is why this module avoids it entirely (see
+    module docstring). FMP's free tier covers both US and NSE-suffixed
+    tickers on /profile; P-E (via /ratios-ttm) is premium-gated for non-US
+    symbols on the free tier, so it's attempted best-effort and left None
+    on failure rather than guessed.
 
-    Sector/industry aren't available on the crumb-free chart endpoint (the
-    endpoint that has them, quoteSummary, is the one that's rate-limited),
-    so this reports "Unknown" for both -- it only softens the diversification
-    chart, it never blocks ingestion or price-based math.
+    Returns None if FMP_API_KEY isn't set or the request fails/returns
+    nothing -- callers must treat that as "no data available", not an error.
+    """
+    api_key = os.environ.get("FMP_API_KEY")
+    if not api_key:
+        return None
+    try:
+        resp = requests.get(
+            f"{_FMP_BASE_URL}/profile",
+            params={"symbol": ticker, "apikey": api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            return None
+        profile = data[0]
+
+        pe_ratio = None
+        try:
+            ratios_resp = requests.get(
+                f"{_FMP_BASE_URL}/ratios-ttm",
+                params={"symbol": ticker, "apikey": api_key},
+                timeout=10,
+            )
+            if ratios_resp.ok:
+                ratios_data = ratios_resp.json()
+                if isinstance(ratios_data, list) and ratios_data:
+                    pe_ratio = ratios_data[0].get("priceToEarningsRatioTTM")
+        except Exception:
+            pass  # P-E is best-effort; premium-gated for many non-US tickers on the free tier
+
+        return {
+            "sector": profile.get("sector") or "Unknown",
+            "industry": profile.get("industry") or "Unknown",
+            "market_cap": profile.get("marketCap") or 0,
+            "pe_ratio": pe_ratio,
+        }
+    except Exception:
+        logger.warning("FMP profile lookup failed for %s", ticker, exc_info=True)
+        return None
+
+
+def get_metadata(tickers: list[str]) -> dict[str, dict]:
+    """Return sector/industry/market-cap/P-E metadata for each ticker.
+
+    Tries Financial Modeling Prep's /profile endpoint first (real sector,
+    industry, market cap for both US and NSE-suffixed tickers on the free
+    tier). Falls back to "Unknown"/0/None -- which only softens the
+    diversification chart, it never blocks ingestion or price-based math --
+    when FMP_API_KEY isn't configured or the lookup fails for a ticker.
 
     Structure::
 
@@ -210,19 +268,22 @@ def get_metadata(tickers: list[str]) -> dict[str, dict]:
                 "sector":     str,
                 "industry":   str,
                 "market_cap": int,
+                "pe_ratio":   float | None,
                 "asset_class": str,   # "ETF" | "Crypto" | "Equity"
             },
             ...
         }
     """
     metas = _parallel_map(resolve_ticker_metadata, tickers)
+    fmp_profiles = _parallel_map(_fetch_fmp_profile, tickers)
 
     result: dict[str, dict] = {}
-    for t, meta in zip(tickers, metas):
+    for t, meta, fmp in zip(tickers, metas, fmp_profiles):
         result[t] = {
-            "sector": "Unknown",
-            "industry": "Unknown",
-            "market_cap": 0,
+            "sector": (fmp or {}).get("sector", "Unknown"),
+            "industry": (fmp or {}).get("industry", "Unknown"),
+            "market_cap": (fmp or {}).get("market_cap", 0),
+            "pe_ratio": (fmp or {}).get("pe_ratio"),
             "asset_class": meta.get("asset_class") or "Equity",
         }
 

@@ -168,13 +168,23 @@ class TestFetchBenchmark:
 # ---------------------------------------------------------------------------
 
 class TestGetMetadata:
-    """Tests for market_data.get_metadata — sector/industry are always
-    "Unknown" since that data isn't available crumb-free; asset_class comes
-    from resolve_ticker_metadata."""
+    """Tests for market_data.get_metadata. Sector/industry/market_cap/pe_ratio
+    come from FMP's /profile endpoint when FMP_API_KEY is configured, falling
+    back to "Unknown"/0/None otherwise; asset_class always comes from
+    resolve_ticker_metadata (Yahoo chart-derived, no API key needed).
 
+    _fetch_fmp_profile is explicitly mocked in every test here rather than
+    relying on FMP_API_KEY being absent from the environment -- other test
+    modules import app.main, which calls load_dotenv() and can pull the real
+    key into os.environ for the rest of the pytest process, so asserting on
+    ambient env state would be order-dependent and flaky.
+    """
+
+    @patch("app.market_data._fetch_fmp_profile")
     @patch("app.market_data.resolve_ticker_metadata")
-    def test_reports_unknown_sector_and_industry(self, mock_resolve):
+    def test_reports_unknown_when_fmp_unavailable(self, mock_resolve, mock_fmp):
         mock_resolve.return_value = {"asset_class": "Equity", "valid": True}
+        mock_fmp.return_value = None
 
         from app.market_data import get_metadata
         result = get_metadata(["INFY.NS"])
@@ -183,25 +193,112 @@ class TestGetMetadata:
         assert entry["sector"] == "Unknown"
         assert entry["industry"] == "Unknown"
         assert entry["market_cap"] == 0
+        assert entry["pe_ratio"] is None
         assert entry["asset_class"] == "Equity"
 
+    @patch("app.market_data._fetch_fmp_profile")
     @patch("app.market_data.resolve_ticker_metadata")
-    def test_asset_class_reflects_resolved_ticker(self, mock_resolve):
+    def test_reports_real_data_when_fmp_available(self, mock_resolve, mock_fmp):
+        mock_resolve.return_value = {"asset_class": "Equity", "valid": True}
+        mock_fmp.return_value = {
+            "sector": "Energy", "industry": "Oil & Gas", "market_cap": 123, "pe_ratio": 24.5,
+        }
+
+        from app.market_data import get_metadata
+        result = get_metadata(["RELIANCE.NS"])
+
+        entry = result["RELIANCE.NS"]
+        assert entry["sector"] == "Energy"
+        assert entry["industry"] == "Oil & Gas"
+        assert entry["market_cap"] == 123
+        assert entry["pe_ratio"] == 24.5
+
+    @patch("app.market_data._fetch_fmp_profile")
+    @patch("app.market_data.resolve_ticker_metadata")
+    def test_asset_class_reflects_resolved_ticker(self, mock_resolve, mock_fmp):
         mock_resolve.return_value = {"asset_class": "ETF", "valid": True}
+        mock_fmp.return_value = None
 
         from app.market_data import get_metadata
         result = get_metadata(["NIFTYBEES.NS"])
 
         assert result["NIFTYBEES.NS"]["asset_class"] == "ETF"
 
+    @patch("app.market_data._fetch_fmp_profile")
     @patch("app.market_data.resolve_ticker_metadata")
-    def test_multiple_tickers_each_get_own_entry(self, mock_resolve):
+    def test_multiple_tickers_each_get_own_entry(self, mock_resolve, mock_fmp):
         mock_resolve.side_effect = lambda t: {"asset_class": "Equity", "valid": True}
+        mock_fmp.return_value = None
 
         from app.market_data import get_metadata
         result = get_metadata(["A.NS", "B.NS"])
 
         assert set(result.keys()) == {"A.NS", "B.NS"}
+
+
+# ---------------------------------------------------------------------------
+# _fetch_fmp_profile
+# ---------------------------------------------------------------------------
+
+class TestFetchFmpProfile:
+    """Tests for market_data._fetch_fmp_profile — mocks requests.get, no
+    real network calls or API key needed."""
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_returns_none_without_api_key(self):
+        from app.market_data import _fetch_fmp_profile
+        assert _fetch_fmp_profile("AAPL") is None
+
+    @patch("app.market_data.requests.get")
+    @patch.dict("os.environ", {"FMP_API_KEY": "test-key"})
+    def test_parses_profile_and_pe(self, mock_get):
+        profile_resp = type("R", (), {
+            "ok": True,
+            "raise_for_status": lambda self: None,
+            "json": lambda self: [{"sector": "Technology", "industry": "Consumer Electronics", "marketCap": 999}],
+        })()
+        ratios_resp = type("R", (), {
+            "ok": True,
+            "json": lambda self: [{"priceToEarningsRatioTTM": 28.5}],
+        })()
+        mock_get.side_effect = [profile_resp, ratios_resp]
+
+        from app.market_data import _fetch_fmp_profile
+        result = _fetch_fmp_profile("AAPL")
+
+        assert result == {
+            "sector": "Technology",
+            "industry": "Consumer Electronics",
+            "market_cap": 999,
+            "pe_ratio": 28.5,
+        }
+
+    @patch("app.market_data.requests.get")
+    @patch.dict("os.environ", {"FMP_API_KEY": "test-key"})
+    def test_pe_none_when_ratios_call_fails(self, mock_get):
+        profile_resp = type("R", (), {
+            "ok": True,
+            "raise_for_status": lambda self: None,
+            "json": lambda self: [{"sector": "Energy", "industry": "Oil & Gas", "marketCap": 111}],
+        })()
+
+        def side_effect(url, **kwargs):
+            if "ratios-ttm" in url:
+                raise Exception("premium-gated")
+            return profile_resp
+        mock_get.side_effect = side_effect
+
+        from app.market_data import _fetch_fmp_profile
+        result = _fetch_fmp_profile("RELIANCE.NS")
+
+        assert result["sector"] == "Energy"
+        assert result["pe_ratio"] is None
+
+    @patch("app.market_data.requests.get", side_effect=Exception("network error"))
+    @patch.dict("os.environ", {"FMP_API_KEY": "test-key"})
+    def test_returns_none_on_request_failure(self, mock_get):
+        from app.market_data import _fetch_fmp_profile
+        assert _fetch_fmp_profile("AAPL") is None
 
 
 # ---------------------------------------------------------------------------
